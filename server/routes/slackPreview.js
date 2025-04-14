@@ -130,4 +130,46 @@ router.get('/getSlackPreviewMessage', async (req, res) => {
   }
 });
 
+
+router.post('/sendSlackMessage', async (req, res) => {
+    try {
+      console.log("Received POST /sendSlackMessage with body:", req.body);
+      const { slackMessage } = req.body;
+      if (!slackMessage) {
+        console.error("No slackMessage provided in the request body.");
+        return res.status(400).json({ error: 'slackMessage is required' });
+      }
+      
+      const token = config.SLACK_BOT_TOKEN;
+      const channel = config.SLACK_CHANNEL_ID;
+      const slackApiUrl = 'https://slack.com/api/chat.postMessage';
+      
+      console.log(`Sending Slack message to channel ${channel} via ${slackApiUrl}`);
+      console.log("Slack message content:", slackMessage);
+      
+      // Slack API 호출
+      const response = await axios.post(slackApiUrl, {
+        channel,
+        text: slackMessage,
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log("Slack API response data:", response.data);
+      
+      if (!response.data.ok) {
+        console.error("Slack API responded with an error:", response.data);
+        return res.status(500).json({ error: 'Failed to send message to Slack', details: response.data });
+      }
+      
+      res.json({ message: 'Slack message sent successfully!', slackResponse: response.data });
+    } catch (error) {
+      console.error('Error sending Slack message:', error.response ? error.response.data : error.message);
+      res.status(500).json({ error: 'Failed to send Slack message', details: error.response ? error.response.data : error.message });
+    }
+  });
+  
 module.exports = router;
