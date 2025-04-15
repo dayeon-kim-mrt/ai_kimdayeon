@@ -15,7 +15,7 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 // 라우터 등록
-app.use('/api', claudeRoutes.router);
+app.use('/api', claudeRoutes);
 app.use('/api', confluenceRoutes);
 app.use('/api', slackPreviewRoutes);
 

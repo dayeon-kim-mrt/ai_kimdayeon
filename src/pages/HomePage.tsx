@@ -1,7 +1,20 @@
 // src/pages/HomePage.tsx
 import React, { useState } from 'react';
 import axios from 'axios';
-import { generateWikiPageTitle, chunkSummarizeScript, createConfluencePage } from '../api/claudeApi';
+import { generateWikiPageTitle, chunkSummarizeScript, createConfluencePage, getPageTitlesByIds, generateSummary, generateSlackElements, PageInfo, SlackElementRequestPage } from '../api/claudeApi';
+
+// Confluence URL에서 Page ID 추출하는 헬퍼 함수
+const parsePageIdFromUrl = (url: string): string | null => {
+  if (!url) return null;
+  try {
+    // 예: https://your-confluence.atlassian.net/wiki/spaces/SPACEKEY/pages/123456789/Page+Title
+    const match = url.match(/\/pages\/(\d+)/);
+    return match ? match[1] : null;
+  } catch (e) {
+    console.error("Error parsing Page ID from URL:", url, e);
+    return null;
+  }
+};
 
 const HomePage: React.FC = () => {
   // SRT 파일과 구글 드라이브 링크를 위한 상태 추가
@@ -12,12 +25,14 @@ const HomePage: React.FC = () => {
   const [wikiTitle, setWikiTitle] = useState('');
   const [wikiContent, setWikiContent] = useState('');
   const [pageUrl, setPageUrl] = useState<string | null>(null);
-  const [slackPreview, setSlackPreview] = useState<string | null>(null);
   const [editableSlackMessage, setEditableSlackMessage] = useState<string>('');
   const [sendResult, setSendResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(''); // 클립보드 복사 성공 메시지 상태
+
+  // 직접 입력 링크 상태 추가
+  const [manualLinks, setManualLinks] = useState<string[]>(['']);
 
   // FileReader API를 사용하여 파일을 텍스트로 읽어주는 헬퍼 함수
   const readFileAsText = (file: File): Promise<string> => {
@@ -49,7 +64,7 @@ const HomePage: React.FC = () => {
     setWikiTitle('');
     setWikiContent('');
     setPageUrl(null);
-    setSlackPreview(null);
+    setEditableSlackMessage('');
     setSendResult(null);
 
     try {
@@ -77,24 +92,87 @@ const HomePage: React.FC = () => {
     }
   };
 
-  // Slack 미리보기 생성 핸들러
-  const handleSlackPreview = async () => {
+  // 핸들러: 오늘의 Wiki 기반 미리보기 생성 (기존 로직)
+  const handleTodaySlackPreview = async () => {
     setLoading(true);
     setError(null);
-    setSlackPreview(null);
     setEditableSlackMessage('');
     try {
+      // 백엔드에서 오늘 생성된 페이지 기반의 미리보기 메시지를 가져옴
       const response = await axios.get(`${process.env.REACT_APP_API_BASE_URL}/api/getSlackPreviewMessage`);
-      setSlackPreview(response.data.slackPreview);
       setEditableSlackMessage(response.data.slackPreview);
     } catch (err: any) {
-      setError(err.message || 'Slack 미리보기 생성 오류');
+      setError(err.message || '오늘의 Slack 미리보기 생성 오류');
     } finally {
       setLoading(false);
     }
   };
 
-  // Slack 메시지 전송 핸들러
+  // 핸들러: 직접 입력된 링크 기반 미리보기 생성 (수정됨)
+  const handleManualLinkPreview = async () => {
+    setLoading(true);
+    setError(null);
+    setEditableSlackMessage('');
+    
+    const validUrls = manualLinks.map(link => link.trim()).filter(link => link !== '');
+    if (validUrls.length === 0) {
+      setError('미리보기를 생성할 유효한 Confluence 링크를 하나 이상 입력하세요.');
+      setLoading(false);
+      return;
+    }
+
+    const pageIds = validUrls.map(parsePageIdFromUrl).filter((id): id is string => id !== null);
+    
+    if (pageIds.length !== validUrls.length) {
+      // 일부 URL에서 ID 추출 실패 시 경고 (필수는 아님)
+      console.warn('Some URLs did not contain valid Confluence Page IDs and were skipped.');
+    }
+    if (pageIds.length === 0) {
+       setError('입력된 URL에서 유효한 Confluence Page ID를 추출할 수 없습니다. URL 형식을 확인하세요. (예: .../pages/12345/...)');
+       setLoading(false);
+       return;
+    }
+
+    try {
+      // 1. 백엔드 API 호출하여 Page 정보 (제목, URL, 내용 포함) 가져오기
+      const pagesInfo: PageInfo[] = await getPageTitlesByIds(pageIds);
+
+      // 2. 각 페이지 내용으로 요약 생성 (병렬 처리)
+      const summaryPromises = pagesInfo.map(page => 
+        generateSummary(page.content) // 각 페이지 content로 요약 함수 호출
+      );
+      const summaries = await Promise.all(summaryPromises);
+
+      // 3. 이모지 및 마무리 멘트 생성 위한 데이터 준비
+      const pagesForElements: SlackElementRequestPage[] = pagesInfo.map((page, index) => ({
+        title: page.title,
+        summary: summaries[index] || '' // 요약 없으면 빈 문자열 전달
+      }));
+      
+      // 4. 이모지 및 마무리 멘트 생성 API 호출
+      const { emojis, closingRemark } = await generateSlackElements(pagesForElements);
+
+      // 5. 최종 Slack 메시지 본문 구성
+      let message = ':mega: *모두의 AI 영상이 업로드 되었어요~*\n\n';
+      pagesInfo.forEach((page, index) => {
+        const emoji = emojis[index]?.emoji || ':page_facing_up:'; // 동적 이모지 사용
+        const summary = summaries[index] || '(요약)'; 
+        message += `${emoji} *${page.title}*\n`;
+        message += `${summary}\n`; 
+        message += `<${page.url}>\n\n`;
+      });
+      message += `${closingRemark}\n`; // 동적 마무리 멘트 사용
+
+      setEditableSlackMessage(message);
+
+    } catch (err: any) {
+      setError(err.message || '입력된 링크 기반 Slack 미리보기 생성 오류');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 핸들러: Slack 메시지 전송 (공통 사용)
   const handleSendSlackMessage = async () => {
     if (!editableSlackMessage) {
       setError('먼저 Slack 메시지 미리보기를 생성하거나 내용을 입력하세요.');
@@ -103,11 +181,9 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // 항상 <!here>를 메시지 시작 부분에 추가
       const finalMessage = `<!here> ${editableSlackMessage}`;
-
       const response = await axios.post(`${process.env.REACT_APP_API_BASE_URL}/api/sendSlackMessage`, {
-        slackMessage: finalMessage, // @here가 포함된 최종 메시지 전송
+        slackMessage: finalMessage,
       });
       setSendResult(response.data.message || 'Slack 메시지 전송 완료');
     } catch (err: any) {
@@ -129,10 +205,40 @@ const HomePage: React.FC = () => {
     });
   };
 
+  // --- 직접 링크 입력 관련 핸들러 ---
+  const handleManualLinkChange = (index: number, value: string) => {
+    const newLinks = [...manualLinks];
+    newLinks[index] = value;
+    setManualLinks(newLinks);
+  };
+
+  const handleAddManualLink = () => {
+    setManualLinks([...manualLinks, '']);
+  };
+
+  // 핸들러: 생성된 Wiki URL을 직접 링크 입력에 추가 (Slack 메시지 Input 버튼)
+  const handleSlackInput = () => {
+    if (!pageUrl) return;
+
+    const currentLinks = [...manualLinks];
+    const firstEmptyIndex = currentLinks.findIndex(link => link.trim() === '');
+
+    if (firstEmptyIndex !== -1) {
+      // 빈 칸이 있으면 거기에 채움
+      currentLinks[firstEmptyIndex] = pageUrl;
+      setManualLinks(currentLinks);
+    } else {
+      // 빈 칸이 없으면 새로 추가
+      setManualLinks([...currentLinks, pageUrl]);
+    }
+  };
+
   return (
     <div style={{ padding: 20, maxWidth: 800, margin: '0 auto' }}>
-      <h1>Confluence 위키 업로드 & Slack 메시지 미리보기</h1>
+      <h1>Confluence 위키 업로드 & Slack 메시지 생성</h1>
       
+      {/* === 위키 업로드 섹션 === */}
+      <h2>1. Confluence 페이지 생성</h2>
       {/* SRT 파일 첨부 입력 */}
       <div style={{ marginBottom: 10 }}>
         <label>
@@ -163,79 +269,109 @@ const HomePage: React.FC = () => {
         </label>
       </div>
 
-      {/* 버튼 영역 */}
-      <div style={{ marginBottom: 20 }}> {/* 하단 마진 증가 */}
-        <button onClick={handleUpload} disabled={loading || !srtFile || !driveLink.trim()}>
-          {loading ? '업로드 중...' : '위키 업로드'}
-        </button>
-        <button onClick={handleSlackPreview} disabled={loading} style={{ marginLeft: 10 }}>
-          {loading ? '미리보기 중...' : 'Slack 메시지 미리보기'}
-        </button>
-        <button onClick={handleSendSlackMessage} disabled={loading || !editableSlackMessage} style={{ marginLeft: 10 }}>
-          {loading ? '전송 중...' : 'Slack 메시지 전송'}
-        </button>
+      {/* 위키 업로드 버튼 */} 
+      <div style={{ marginBottom: 10 }}>
+         <button onClick={handleUpload} disabled={loading || !srtFile || !driveLink.trim()}>
+           {loading ? '업로드 중...' : '위키 업로드'}
+         </button>
       </div>
 
-      {/* 생성된 위키 페이지 URL 출력 영역 */}
+      {/* 생성된 위키 페이지 URL 출력 영역 */} 
       {pageUrl && (
-        <div style={{ marginBottom: 20 }}> {/* 하단 마진 추가 */}
+        <div style={{ marginBottom: 20 }}>
           <label>
            생성된 Wiki 페이지 링크:&nbsp;
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}> {/* Flexbox 레이아웃 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <input
                 type="text"
                 value={pageUrl}
                 readOnly
-                style={{ width: 'calc(100% - 180px)', padding: '8px', border: '1px solid #ccc', backgroundColor: '#f8f8f8' }} /* 스타일 조정 */
-                onClick={(e) => (e.target as HTMLInputElement).select()} // 클릭 시 전체 선택
+                style={{ width: 'calc(100% - 200px)', padding: '8px', border: '1px solid #ccc', backgroundColor: '#f8f8f8' }} /* 너비 조정 */
+                onClick={(e) => (e.target as HTMLInputElement).select()}
               />
               <button onClick={handleCopyToClipboard} style={{ padding: '8px 12px' }}>
-                {copySuccess || '복사'} {/* 복사 성공/실패 메시지 표시 */}
+                {copySuccess || '복사'}
               </button>
-               <button onClick={() => { /* TODO: Slack 메시지 Input 기능 구현 */ }} style={{ padding: '8px 12px' }}>
-                 Slack 메시지 Input
-               </button>
+              {/* 버튼 클릭 시 handleSlackInput 호출 */}
+              <button onClick={handleSlackInput} style={{ padding: '8px 12px' }}>
+                Slack 메시지 Input
+              </button>
             </div>
           </label>
-          {/* 원래 링크 위치 주석 처리
-          <a href={pageUrl} target="_blank" rel="noopener noreferrer">
-            {pageUrl}
-          </a>
-          */}
         </div>
       )}
+      
+      {/* === Slack 메시지 생성 섹션 === */}
+      <h2 style={{ marginTop: 40 }}>2. Slack 메시지 생성 및 전송</h2>
+      
+       {/* --- 직접 링크 입력 --- */} 
+      <div style={{ marginBottom: 10, border: '1px solid #eee', padding: 15 }}>
+        <h3 style={{ marginTop: 0 }}>옵션 A: 링크 직접 입력하여 생성</h3>
+        {manualLinks.map((link, index) => (
+          <div key={index} style={{ display: 'flex', marginBottom: '5px', gap: '5px' }}>
+            <input
+              type="text"
+              value={link}
+              onChange={(e) => handleManualLinkChange(index, e.target.value)}
+              placeholder={`https://.../pages/12345/... 링크 ${index + 1}`}
+              style={{ flexGrow: 1, padding: '8px' }}
+            />
+            {/* 간단하게 '+' 버튼만 추가 (삭제 버튼은 필요시 추가) */} 
+            {index === manualLinks.length - 1 && (
+               <button onClick={handleAddManualLink} style={{ padding: '8px 12px' }}>+</button>
+            )}
+          </div>
+        ))}
+        <button onClick={handleManualLinkPreview} disabled={loading} style={{ marginTop: 5 }}>
+          Slack 메시지 미리보기 (링크 입력)
+        </button>
+      </div>
 
+      {/* --- 오늘 업로드된 Wiki 기준 --- */} 
+      <div style={{ marginBottom: 20, border: '1px solid #eee', padding: 15 }}>
+         <h3 style={{ marginTop: 0 }}>옵션 B: 오늘 업로드된 Wiki 기준으로 생성</h3>
+         <button onClick={handleTodaySlackPreview} disabled={loading}>
+           오늘의 wiki Slack 메시지 미리보기
+         </button>
+      </div>
+
+      {/* --- 공통 에러 메시지 --- */} 
       {error && <p style={{ color: 'red' }}>{error}</p>}
 
+      {/* === 생성된 Wiki 내용 (참고용) === */}
       {wikiTitle && (
-        <div style={{ marginTop: 20 }}>
-          <h2>생성된 제목</h2>
+        <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
+          <h2>참고: 생성된 Wiki 제목</h2>
           <p>{wikiTitle}</p>
         </div>
       )}
-
       {wikiContent && (
         <div style={{ marginTop: 20 }}>
-          <h2>생성된 Wiki 본문 (Confluence Markup)</h2>
+          <h2>참고: 생성된 Wiki 본문 (Confluence Markup)</h2>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{wikiContent}</pre>
         </div>
       )}
 
-      {/* Slack 미리보기 및 수정 영역 */}
+      {/* --- Slack 미리보기 및 수정 영역 (공통 사용) --- */} 
       {editableSlackMessage && (
         <div style={{ marginTop: 20 }}>
-          <h2>Slack 메시지 미리보기 (수정 가능)</h2>
+          <h3>Slack 메시지 미리보기 (수정 가능)</h3>
           <textarea
             value={editableSlackMessage}
             onChange={(e) => setEditableSlackMessage(e.target.value)}
             style={{ width: '100%', minHeight: '150px', padding: '10px', border: '1px solid #ccc', boxSizing: 'border-box' }}
           />
+           {/* Slack 전송 버튼 */}
+           <button onClick={handleSendSlackMessage} disabled={loading || !editableSlackMessage} style={{ marginTop: 10 }}>
+             {loading ? '전송 중...' : 'Slack 메시지 전송'}
+           </button>
         </div>
       )}
 
+       {/* --- Slack 전송 결과 (공통 사용) --- */} 
       {sendResult && (
         <div style={{ marginTop: 20 }}>
-          <h2>Slack 전송 결과</h2>
+          <h3>Slack 전송 결과</h3>
           <p>{sendResult}</p>
         </div>
       )}
