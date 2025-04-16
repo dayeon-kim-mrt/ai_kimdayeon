@@ -149,5 +149,75 @@ router.post('/getPageTitles', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/getTodayConfluencePages
+ * 오늘 생성 또는 수정된 Confluence 페이지 목록을 검색하여 기본 정보(제목, 요약, URL)를 반환.
+ * Confluence REST API(/rest/api/search)를 사용하여 CQL 쿼리로 검색.
+ */
+router.get('/getTodayConfluencePages', async (req, res) => {
+  try {
+    // 오늘 날짜 (YYYY-MM-DD 형식) 계산
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const day = now.getDate().toString().padStart(2, '0');
+    const todayFormatted = `${year}-${month}-${day}`;
+
+    const confluenceBaseUrl = getConfluenceBaseUrl(); // 헬퍼 함수 사용
+
+    // Confluence 검색 쿼리 (CQL) - 오늘 마지막으로 수정된 페이지 기준
+    const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND lastModified >= "${todayFormatted}"`;
+    console.log(`Executing Confluence Search CQL: ${cqlRaw}`);
+
+    const cql = encodeURIComponent(cqlRaw);
+    // 검색 API 호출 (expand=body.storage 로 본문 내용 일부 포함)
+    const url = `${confluenceBaseUrl}/rest/api/search?cql=${cql}&limit=50&expand=body.storage`;
+    console.log(`Final Confluence search URL: ${url}`);
+
+    const authString = getAuthString(); // 헬퍼 함수 사용
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    console.log(`Confluence search returned ${response.data.results.length} results.`);
+
+    // 검색 결과에서 필요한 정보 추출 및 가공
+    const pages = response.data.results.map(result => {
+      const title = result.content.title || "제목 없음";
+      const pageId = result.content.id;
+      const spaceKey = result.content.space?.key || config.SPACE_KEY;
+      const pageUrl = `${confluenceBaseUrl}/spaces/${spaceKey}/pages/${pageId}`;
+
+      // 본문 요약 추출 시도 (body.storage 우선, 없으면 excerpt)
+      let summary = "";
+      if (result.content.body?.storage?.value) {
+        // 간단한 HTML 태그 제거 및 길이 제한
+        summary = result.content.body.storage.value.replace(/<[^>]+>/g, ' ').replace(/s+/g, ' ').trim().slice(0, 300);
+      }
+      if (!summary && result.excerpt) { // storage 내용 없으면 excerpt 사용
+        summary = result.excerpt.replace(/<[^>]+>/g, '').trim();
+      }
+      if (!summary) {
+        summary = "내용 요약 없음";
+      }
+
+      return { title, summary, pageUrl };
+    });
+
+    // 추출된 페이지 정보 배열 응답
+    res.json({ pages });
+  } catch (error) {
+    console.error('Error fetching today Confluence pages:', error.response ? error.response.data : error.message);
+    res.status(500).json({
+      error: 'Failed to fetch today Confluence pages',
+      details: error.response ? JSON.stringify(error.response.data) : error.message
+    });
+  }
+});
+
 // 이 라우터 모듈을 export
 module.exports = router;

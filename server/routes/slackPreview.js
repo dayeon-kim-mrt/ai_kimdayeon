@@ -83,83 +83,16 @@ async function composeSlackPreviewMessage(pages) {
   return message;
 }
 
-// 오늘 Confluence 페이지들을 가져오는 엔드포인트
-router.get('/getTodayConfluencePages', async (req, res) => {
-  try {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = (now.getMonth() + 1).toString().padStart(2, '0');
-    const day = now.getDate().toString().padStart(2, '0');
-    const todayFormatted = `${year}-${month}-${day}`; // Confluence CQL 날짜 형식 (YYYY-MM-DD)
 
-    // Confluence Base URL 정리: 마지막 '/' 제거
-    const confluenceBaseUrl = config.CONFLUENCE_URL.endsWith('/')
-      ? config.CONFLUENCE_URL.slice(0, -1)
-      : config.CONFLUENCE_URL;
-
-    // CQL 쿼리 구성 (날짜는 "YYYY-MM-DD" 형식 사용, created 대신 lastModified 사용 가능성 고려)
-    // const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND created >= "${todayFormatted} 00:00" AND created <= "${todayFormatted} 23:59"`;
-    const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND lastModified >= "${todayFormatted}"`; // 오늘 수정된 내용 기준
-    console.log(`Executing Confluence Search CQL: ${cqlRaw}`);
-
-    const cql = encodeURIComponent(cqlRaw);
-    // expand=body.storage 추가하여 원본 excerpt 대신 사용 가능한 내용 확보
-    const url = `${confluenceBaseUrl}/rest/api/search?cql=${cql}&limit=50&expand=body.storage`;
-    console.log(`Final Confluence search URL: ${url}`);
-
-    const authString = Buffer.from(`${config.CONFLUENCE_USERNAME}:${config.CONFLUENCE_TOKEN}`).toString('base64');
-    const response = await axios.get(url, {
-      headers: {
-        'Authorization': `Basic ${authString}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
-    });
-
-    console.log(`Confluence search returned ${response.data.results.length} results.`);
-
-    // 결과 매핑: 제목, 요약(body.storage에서 추출 시도), URL 추출
-    const pages = response.data.results.map(result => {
-      const title = result.content.title || "제목 없음";
-      const pageId = result.content.id;
-      const spaceKey = result.content.space?.key || config.SPACE_KEY;
-      const pageUrl = `${confluenceBaseUrl}/spaces/${spaceKey}/pages/${pageId}`;
-
-      // body.storage.value (HTML)에서 텍스트 추출 시도 (간단 버전)
-      let summary = "";
-      if (result.content.body?.storage?.value) {
-        // 매우 기본적인 태그 제거, 실제로는 더 복잡한 파서 필요 가능성 있음
-        summary = result.content.body.storage.value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300); // 300자 제한
-      }
-      if (!summary && result.excerpt) { // storage에서 못가져오면 excerpt 사용
-        summary = result.excerpt.replace(/<[^>]+>/g, '').trim();
-      }
-      if (!summary) {
-        summary = "내용 요약 없음";
-      }
-
-      return { title, summary, pageUrl };
-    });
-
-    res.json({ pages });
-  } catch (error) {
-    console.error('Error fetching today Confluence pages:', error.response ? error.response.data : error.message);
-    res.status(500).json({
-      error: 'Failed to fetch today Confluence pages',
-      details: error.response ? JSON.stringify(error.response.data) : error.message // 상세 에러 포함
-    });
-  }
-});
-
-// Slack 메시지 미리보기 텍스트 생성 엔드포인트
 router.get('/getSlackPreviewMessage', async (req, res) => {
   try {
-    // 내부적으로 오늘 Confluence 페이지 정보 조회
+    // 1. 오늘 수정된 Confluence 페이지 목록 가져오기 (HTTP 호출로 변경)
     const pagesResponse = await axios.get(`http://localhost:${config.PORT}/api/getTodayConfluencePages`);
     const pages = pagesResponse.data.pages;
 
-    // 수정된 composeSlackPreviewMessage 호출
+    // 2. 가져온 페이지 정보로 Slack 미리보기 메시지 생성
     const slackPreviewMessage = await composeSlackPreviewMessage(pages);
+    // 3. 생성된 미리보기 메시지 응답
     res.json({ slackPreview: slackPreviewMessage });
   } catch (error) {
     console.error('Error generating Slack preview message:', error.response ? error.response.data : error.message);

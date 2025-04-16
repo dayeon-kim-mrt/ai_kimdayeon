@@ -1,20 +1,24 @@
 // src/pages/HomePage.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { generateWikiPageTitle, chunkSummarizeScript, createConfluencePage, getPageTitlesByIds, generateSummary, generateSlackElements, PageInfo, SlackElementRequestPage } from '../api/claudeApi';
-
-// Confluence URL에서 Page ID 추출하는 헬퍼 함수
-const parsePageIdFromUrl = (url: string): string | null => {
-  if (!url) return null;
-  try {
-    // 예: https://your-confluence.atlassian.net/wiki/spaces/SPACEKEY/pages/123456789/Page+Title
-    const match = url.match(/\/pages\/(\d+)/);
-    return match ? match[1] : null;
-  } catch (e) {
-    console.error("Error parsing Page ID from URL:", url, e);
-    return null;
-  }
-};
+import { JsonInput, Button, LoadingOverlay, Textarea, TextInput, MultiSelect, ActionIcon, Tooltip, Alert, Checkbox, Group, Box, CopyButton, FileInput, Text, Space } from '@mantine/core';
+import { IconCirclePlus, IconTrash, IconInfoCircle } from '@tabler/icons-react';
+import config from '../../server/config';
+import { parsePageIdFromUrl, readFileAsText } from '../utils/helpers';
+import { 
+  generateWikiPageTitle, 
+  chunkSummarizeScript, 
+  generateSummary, 
+  generateSlackElements, 
+  SlackElementRequestPage, 
+  SlackElementResponse 
+} from '../api/claudeApi';
+import { 
+  createConfluencePage, 
+  getPageTitlesByIds, 
+  PageInfo 
+} from '../api/confluenceApi';
+import { sendSlackMessage } from '../api/slackApi';
 
 const HomePage: React.FC = () => {
   // SRT 파일과 구글 드라이브 링크를 위한 상태 추가
@@ -33,20 +37,6 @@ const HomePage: React.FC = () => {
 
   // 직접 입력 링크 상태 추가
   const [manualLinks, setManualLinks] = useState<string[]>(['']);
-
-  // FileReader API를 사용하여 파일을 텍스트로 읽어주는 헬퍼 함수
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        resolve(reader.result as string);
-      };
-      reader.onerror = () => {
-        reject(new Error('파일을 읽는 도중 오류 발생'));
-      };
-      reader.readAsText(file, 'UTF-8');
-    });
-  };
 
   // 위키 업로드 핸들러
   const handleUpload = async () => {
@@ -182,10 +172,11 @@ const HomePage: React.FC = () => {
     setError(null);
     try {
       const finalMessage = `<!here> ${editableSlackMessage}`;
-      const response = await axios.post(`${process.env.REACT_APP_API_BASE_URL}/api/sendSlackMessage`, {
-        slackMessage: finalMessage,
-      });
-      setSendResult(response.data.message || 'Slack 메시지 전송 완료');
+      const result = await sendSlackMessage(finalMessage);
+      if (result.error) {
+        throw new Error(result.details || result.error);
+      }
+      setSendResult(result.message || 'Slack 메시지 전송 완료');
     } catch (err: any) {
       setError(err.message || 'Slack 메시지 전송 오류');
     } finally {
