@@ -33,4 +33,26 @@ export async function sendSlackMessage(slackMessage: string): Promise<{ message?
       details: error.response?.data || error.message 
     };
   }
+}
+
+/**
+ * 백엔드 API(/api/getSlackPreviewMessage)를 호출하여 "오늘의 Wiki"
+ * 기반 Slack 메시지 미리보기를 가져옵니다.
+ * @returns 생성된 Slack 미리보기 메시지 문자열 Promise
+ */
+export async function getTodaySlackPreviewMessage(): Promise<string> {
+  if (!API_BASE_URL) {
+    throw new Error('API base URL not set for getSlackPreviewMessage');
+  }
+
+  try {
+    // 백엔드 API 호출 (GET 요청)
+    const response = await axios.get(`${API_BASE_URL}/api/getSlackPreviewMessage`);
+    // 백엔드 응답 구조 { slackPreview: "..." } 에서 slackPreview 문자열 반환
+    return response.data.slackPreview || ""; 
+  } catch (error: any) {
+    console.error('Error calling /api/getSlackPreviewMessage:', error.response?.data || error.message);
+    // 오류 발생 시 예외 던지기 (호출 측에서 처리)
+    throw new Error('Failed to fetch today Slack preview message from backend.');
+  }
 } 
