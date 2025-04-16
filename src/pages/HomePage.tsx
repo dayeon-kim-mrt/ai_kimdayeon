@@ -216,6 +216,13 @@ const HomePage: React.FC = () => {
     setManualLinks([...manualLinks, '']);
   };
 
+  // --- 추가: 직접 링크 입력 제거 핸들러 ---
+  const handleRemoveManualLink = (indexToRemove: number) => {
+    // 첫 번째 입력 필드는 제거하지 않음 (항상 하나는 유지)
+    if (manualLinks.length <= 1) return;
+    setManualLinks(manualLinks.filter((_, index) => index !== indexToRemove));
+  };
+
   // 핸들러: 생성된 Wiki URL을 직접 링크 입력에 추가 (Slack 메시지 Input 버튼)
   const handleSlackInput = () => {
     if (!pageUrl) return;
@@ -316,9 +323,13 @@ const HomePage: React.FC = () => {
               placeholder={`https://.../pages/12345/... 링크 ${index + 1}`}
               style={{ flexGrow: 1, padding: '8px' }}
             />
-            {/* 간단하게 '+' 버튼만 추가 (삭제 버튼은 필요시 추가) */} 
+            {/* + 버튼: 항상 마지막 줄에 표시 */}
             {index === manualLinks.length - 1 && (
                <button onClick={handleAddManualLink} style={{ padding: '8px 12px' }}>+</button>
+            )}
+            {/* - 버튼: 첫 번째 줄(index 0)을 제외하고 표시 */}
+            {index > 0 && (
+              <button onClick={() => handleRemoveManualLink(index)} style={{ padding: '8px 12px' }}>-</button>
             )}
           </div>
         ))}
