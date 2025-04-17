@@ -156,21 +156,21 @@ router.post('/getPageTitles', async (req, res) => {
  */
 router.get('/getTodayConfluencePages', async (req, res) => {
   try {
-    // 오늘 날짜 (YYYY-MM-DD 형식) 계산
+    // 오늘 날짜 (YYYY-MM-DD 형식) 계산 로직 다시 활성화
     const now = new Date();
     const year = now.getFullYear();
     const month = (now.getMonth() + 1).toString().padStart(2, '0');
     const day = now.getDate().toString().padStart(2, '0');
     const todayFormatted = `${year}-${month}-${day}`;
 
-    const confluenceBaseUrl = getConfluenceBaseUrl(); // 헬퍼 함수 사용
+    const confluenceBaseUrl = getConfluenceBaseUrl();
 
-    // Confluence 검색 쿼리 (CQL) - 오늘 마지막으로 수정된 페이지 기준
-    const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND lastModified >= "${todayFormatted}"`;
+    // Confluence 검색 쿼리 (CQL) - 다시 날짜 문자열 비교 사용
+    const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND lastModified >= "${todayFormatted}"`; 
+    // const cqlRaw = `type=page AND space.key="${config.SPACE_KEY}" AND lastModified >= startOfDay()`; // startOfDay() 주석 처리
     console.log(`Executing Confluence Search CQL: ${cqlRaw}`);
 
     const cql = encodeURIComponent(cqlRaw);
-    // 검색 API 호출 시 expand 파라미터 제거 (ID만 필요)
     const url = `${confluenceBaseUrl}/rest/api/search?cql=${cql}&limit=50`; 
     console.log(`Final Confluence search URL: ${url}`);
 
@@ -184,12 +184,10 @@ router.get('/getTodayConfluencePages', async (req, res) => {
     });
 
     console.log(`Confluence search returned ${response.data.results.length} results.`);
-
-    // 검색 결과에서 페이지 ID만 추출
+    
     const pageIds = response.data.results.map(result => result.content.id);
 
-    // 추출된 페이지 ID 배열 응답
-    res.json({ pageIds }); // { pageIds: [...] }
+    res.json({ pageIds });
     
   } catch (error) {
     console.error('Error fetching today Confluence page IDs:', error.response ? error.response.data : error.message);
@@ -197,6 +195,61 @@ router.get('/getTodayConfluencePages', async (req, res) => {
       error: 'Failed to fetch today Confluence page IDs',
       details: error.response ? JSON.stringify(error.response.data) : error.message
     });
+  }
+});
+
+/**
+ * POST /api/createWikiPageFromSource
+ * SRT 파일 내용과 구글 드라이브 링크를 받아 Confluence 페이지 생성을 조율합니다.
+ * 내부적으로 제목 생성 -> 내용 요약 -> 페이지 생성을 순차적으로 호출합니다.
+ */
+router.post('/createWikiPageFromSource', async (req, res) => {
+  const { srtContent, driveLink } = req.body;
+  console.log(`[POST /api/createWikiPageFromSource] Received request.`);
+
+  if (!srtContent || !driveLink) {
+    return res.status(400).json({ error: 'srtContent and driveLink are required.' });
+  }
+
+  try {
+    // 1. 제목 생성 API 호출 (경로 수정: generateTitle -> makeTitle)
+    console.log(`[POST /api/createWikiPageFromSource] Generating title...`);
+    // 요청 본문의 키 이름도 /makeTitle 에 맞춰 prompt 로 변경
+    const titleResponse = await axios.post(`http://localhost:${config.PORT}/api/makeTitle`, { prompt: srtContent });
+    const title = titleResponse.data.title;
+    if (!title) throw new Error('Failed to generate title.');
+    console.log(`[POST /api/createWikiPageFromSource] Title generated: ${title}`);
+
+    // 2. 내용 요약 API 호출 (경로 및 키 이름 확인 필요 -> /chunkSummarize, script 키 사용 - 변경 없음)
+    console.log(`[POST /api/createWikiPageFromSource] Summarizing content...`);
+    const summaryResponse = await axios.post(`http://localhost:${config.PORT}/api/chunkSummarize`, { script: srtContent });
+    let summarizedContent = summaryResponse.data.summary;
+    // chunkSummarize는 wikiContent를 반환하므로 키 이름 확인 및 수정 필요
+    if (summaryResponse.data.wikiContent) {
+        summarizedContent = summaryResponse.data.wikiContent;
+    } else if (!summarizedContent) {
+        throw new Error('Failed to summarize content or get wikiContent.');
+    }
+    console.log(`[POST /api/createWikiPageFromSource] Content summarized.`);
+
+    // 3. 드라이브 링크 추가 (변경 없음)
+    const finalContent = `h3. 구글 드라이브 링크:\n🔗 ${driveLink}\n\n${summarizedContent}`;
+    console.log(`[POST /api/createWikiPageFromSource] Final content prepared.`);
+
+    // 4. Confluence 페이지 생성 API 호출 (변경 없음, 단 응답에서 URL 키 확인 필요 -> pageUrl 사용)
+    console.log(`[POST /api/createWikiPageFromSource] Creating Confluence page...`);
+    const createPageResponse = await axios.post(`http://localhost:${config.PORT}/api/createPage`, { title, content: finalContent });
+    const pageUrl = createPageResponse.data?.pageUrl; // createPage 응답 키 확인 -> pageUrl 사용
+    if (!pageUrl) throw new Error('Failed to create Confluence page or get URL.');
+    console.log(`[POST /api/createWikiPageFromSource] Confluence page created: ${pageUrl}`);
+
+    // 5. 성공 응답 (페이지 URL 반환)
+    res.json({ pageUrl: pageUrl });
+
+  } catch (error) {
+    console.error(`[POST /api/createWikiPageFromSource] Workflow failed:`, error.response?.data || error.message || error);
+    const errorMessage = error.response?.data?.error || error.message || 'Wiki page creation workflow failed.';
+    res.status(500).json({ error: errorMessage });
   }
 });
 

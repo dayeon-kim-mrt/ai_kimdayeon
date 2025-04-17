@@ -6,7 +6,7 @@ import axios from 'axios';
 
 interface PreviewParams {
   today?: boolean;
-  pageIds?: string[];
+  pageUrls?: string[];
 }
 
 interface UseSlackPreviewReturn {
@@ -37,10 +37,10 @@ const useSlackPreview = (): UseSlackPreviewReturn => {
       let requestBody = {};
       if (params.today) {
         requestBody = { today: true };
-      } else if (params.pageIds && params.pageIds.length > 0) {
-        requestBody = { pageIds: params.pageIds };
+      } else if (params.pageUrls && params.pageUrls.length > 0) {
+        requestBody = { pageUrls: params.pageUrls };
       } else {
-        throw new Error('Invalid parameters: Either today=true or pageIds must be provided.');
+        throw new Error('Invalid parameters: Either today=true or pageUrls must be provided.');
       }
       // 상대 경로 사용 (프록시 설정 가정)
       const response = await axios.post('/api/generateSlackPreview', requestBody); 
@@ -49,7 +49,7 @@ const useSlackPreview = (): UseSlackPreviewReturn => {
 
     } catch (err: any) {
       console.error('[useSlackPreview] Error generating preview:', err);
-      const errorMessage = err.response?.data?.error || err.message || '미리보기 생성 중 오류가 발생했습니다.';
+      const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || '미리보기 생성 중 오류가 발생했습니다.';
       setError(errorMessage);
     } finally {
       setIsLoading(false);

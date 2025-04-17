@@ -7,6 +7,22 @@ const config = require('../config');
 // claudeRoutes.js에서 직접 callClaude 가져오는 대신, 필요하면 generateSummary API 호출
 // const { callClaude } = require('./claudeRoutes');
 
+// --- 유틸리티 함수 추가 --- 
+/**
+ * Confluence URL에서 Page ID를 추출하는 함수.
+ */
+function parsePageIdFromUrl(url) {
+  if (!url) return null;
+  try {
+    const urlObject = new URL(url);
+    const match = urlObject.pathname.match(/\/pages\/(\d+)/);
+    return (match && match[1]) ? match[1] : null;
+  } catch (error) {
+    console.error(`Error parsing URL ${url}:`, error);
+    return null;
+  }
+}
+
 // --- 내부 API 호출 헬퍼 ---
 
 // 페이지 ID 목록으로 페이지 상세 정보(제목, 내용, URL) 가져오기
@@ -137,17 +153,17 @@ async function composeSlackMessageInternal(pages, isToday) {
 
 /**
  * POST /api/generateSlackPreview (통합 엔드포인트)
- * 요청 본문에 따라 오늘의 페이지 또는 지정된 ID의 페이지 기반으로 Slack 미리보기 생성
+ * 요청 본문에 따라 오늘의 페이지 또는 지정된 URL의 페이지 기반으로 Slack 미리보기 생성
  * 요청 본문 예시:
  *  - Today 케이스: { "today": true }
- *  - Manual 케이스: { "pageIds": ["123", "456"] }
+ *  - Manual 케이스: { "pageUrls": ["https://.../123", "https://.../456"] }
  */
 router.post('/generateSlackPreview', async (req, res) => {
-  const { today, pageIds } = req.body;
+  const { today, pageUrls } = req.body; // pageIds -> pageUrls
   let isTodayRequest = !!today;
   let finalPageIds = [];
 
-  console.log(`[POST /api/generateSlackPreview] Request received. today: ${isTodayRequest}, pageIds provided: ${Array.isArray(pageIds)}`);
+  console.log(`[POST /api/generateSlackPreview] Request received. today: ${isTodayRequest}, pageUrls provided: ${Array.isArray(pageUrls)}`);
 
   try {
     if (isTodayRequest) {
@@ -159,14 +175,20 @@ router.post('/generateSlackPreview', async (req, res) => {
       if (finalPageIds.length === 0) {
         return res.json({ slackPreview: "오늘 업데이트된 페이지가 없습니다." });
       }
-    } else if (Array.isArray(pageIds) && pageIds.length > 0) {
-      // Manual 케이스: 제공된 pageIds 사용
-      console.log(`[POST /api/generateSlackPreview] Handling 'manual' request with ${pageIds.length} IDs.`);
-      finalPageIds = pageIds;
+    } else if (Array.isArray(pageUrls) && pageUrls.length > 0) {
+      // Manual 케이스: 제공된 pageUrls에서 ID 추출
+      console.log(`[POST /api/generateSlackPreview] Handling 'manual' request with ${pageUrls.length} URLs.`);
+      finalPageIds = pageUrls
+        .map(parsePageIdFromUrl) // URL 파싱 함수 사용
+        .filter(id => id !== null); // 유효한 ID만 필터링
+      console.log(`[POST /api/generateSlackPreview] Extracted ${finalPageIds.length} valid page IDs from URLs.`);
+      if (finalPageIds.length === 0) {
+          return res.status(400).json({ error: `제공된 URL에서 유효한 Confluence 페이지 ID를 찾을 수 없습니다.` });
+      }
     } else {
       // 잘못된 요청 처리
-      console.log(`[POST /api/generateSlackPreview] Invalid request body. Either 'today: true' or a non-empty 'pageIds' array is required.`);
-      return res.status(400).json({ error: `'today: true' 또는 유효한 'pageIds' 배열이 요청 본문에 필요합니다.` });
+      console.log(`[POST /api/generateSlackPreview] Invalid request body. Either 'today: true' or a non-empty 'pageUrls' array is required.`);
+      return res.status(400).json({ error: `'today: true' 또는 유효한 'pageUrls' 배열이 요청 본문에 필요합니다.` });
     }
 
     // 페이지 상세 정보 조회 (공통 로직)
@@ -192,48 +214,58 @@ router.post('/generateSlackPreview', async (req, res) => {
 
 /**
  * POST /api/sendSlackMessage
- * 프론트엔드에서 받은 최종 메시지를 실제 Slack 채널로 전송
- * (이 엔드포인트는 변경 없음)
+ * Slack 메시지를 Bot Token과 Channel ID를 사용하여 전송 (chat.postMessage API 사용)
  */
 router.post('/sendSlackMessage', async (req, res) => {
+  const { slackMessage } = req.body;
+  console.log('[POST /api/sendSlackMessage] Received request to send message using Bot Token.');
+
+  if (!slackMessage) {
+    console.log('[POST /api/sendSlackMessage] Error: No message provided.');
+    return res.status(400).json({ error: '전송할 메시지가 없습니다.' });
+  }
+
+  // 설정 값 확인 (Bot Token, Channel ID)
+  const token = config.SLACK_BOT_TOKEN;
+  const channel = config.SLACK_CHANNEL_ID;
+  if (!token || !channel) {
+    console.error('[POST /api/sendSlackMessage] Error: Slack Bot Token or Channel ID not configured.');
+    return res.status(500).json({ error: 'Slack Bot Token 또는 Channel ID가 서버에 설정되지 않았습니다.' });
+  }
+
+  const slackApiUrl = 'https://slack.com/api/chat.postMessage';
+
   try {
-    const { slackMessage } = req.body;
-    if (!slackMessage) {
-      return res.status(400).json({ error: `slackMessage is required` });
-    }
-    console.log(`[POST /api/sendSlackMessage] Sending message to Slack...`);
-
-    const token = config.SLACK_BOT_TOKEN;
-    const channel = config.SLACK_CHANNEL_ID;
-    const slackApiUrl = 'https://slack.com/api/chat.postMessage';
-
-    // Slack API 호출
+    // 메시지 전송 전에 <!here> 추가
+    const messageText = `<!here> ${slackMessage}`;
+    
+    console.log(`[POST /api/sendSlackMessage] Sending message to channel ${channel} via chat.postMessage...`);
+    
+    // Slack API 호출 (chat.postMessage 사용)
     const response = await axios.post(slackApiUrl, {
-      channel,
-      text: slackMessage,
+      channel: channel, // 채널 ID 사용
+      text: messageText, // 메시지 내용
       link_names: 1 // @here 같은 멘션 활성화 위해 추가
+      // 만약 블록 키트를 사용한다면 text 대신 blocks 필드를 사용해야 할 수 있습니다.
     }, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Authorization': `Bearer ${token}`, // Bot Token 사용
+        'Content-Type': 'application/json; charset=utf-8'
       }
     });
 
     // Slack API 응답 확인
     if (!response.data.ok) {
       console.error(`[POST /api/sendSlackMessage] Slack API Error:`, response.data);
-      return res.status(500).json({ error: `Failed to send message to Slack`, details: response.data });
+      throw new Error(`Slack API Error: ${response.data.error}`);
     }
-
-    // 성공 응답
-    console.log(`[POST /api/sendSlackMessage] Message sent successfully.`);
-    res.json({ message: `Slack message sent successfully!`, slackResponse: response.data });
+    
+    console.log('[POST /api/sendSlackMessage] Message sent successfully via chat.postMessage.');
+    res.json({ message: 'Slack 메시지 전송 완료', slackResponse: response.data });
 
   } catch (error) {
-    // 전체 에러 처리
-    const errorMessage = error.response ? JSON.stringify(error.response.data) : error.message;
-    console.error(`[POST /api/sendSlackMessage] Error:`, errorMessage);
-    res.status(500).json({ error: `Failed to send Slack message`, details: errorMessage });
+    console.error('[POST /api/sendSlackMessage] Error sending message to Slack:', error.message || error);
+    res.status(500).json({ error: 'Slack 메시지 전송 실패', details: error.message });
   }
 });
 

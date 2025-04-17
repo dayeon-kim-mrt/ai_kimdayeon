@@ -23,7 +23,6 @@ import { IconCirclePlus, IconTrash, IconClipboardCopy, IconCheck, IconAlertCircl
 import { useWikiUpload } from '../hooks/useWikiUpload';           // 위키 페이지 생성 (SRT + Drive Link) 훅
 import useSlackPreview from '../hooks/useSlackPreview';      // 새로운 통합 훅 추가
 import { useSlackSender } from '../hooks/useSlackSender';          // Slack 메시지 전송 훅
-import { parsePageIdFromUrl } from '../utils/helpers'; // 유틸리티 함수 임포트
 
 const HomePage: React.FC = () => {
   // --- 커스텀 훅 사용 ---
@@ -31,20 +30,12 @@ const HomePage: React.FC = () => {
 
   // 위키 업로드 관련 상태 및 함수
   const {
-    srtFile,                // 선택된 SRT 파일 상태
-    setSrtFile,             // SRT 파일 상태 설정 함수
-    driveLink,              // 입력된 구글 드라이브 링크 상태
-    setDriveLink,           // 드라이브 링크 상태 설정 함수
-    wikiTitle,              // 생성된 위키 제목 상태
-    // wikiContent,         // 생성된 위키 본문 (현재 UI에 표시하지 않음)
     pageUrl,                // 생성된 위키 페이지 URL 상태
-    setPageUrl,             // 페이지 URL 상태 설정 함수 (handleSlackInput에서 필요하여 setter 유지)
     isUploading,            // 위키 업로드 진행 중 여부 상태
     uploadError,            // 위키 업로드 관련 에러 메시지 상태
-    handleUpload,           // 위키 업로드 실행 함수
+    uploadWiki,             // 변경된 업로드 함수
+    clearUploadResult,      // 결과 초기화 함수
     clearUploadError,       // 업로드 에러 메시지 초기화 함수
-    setWikiTitle,           // 위키 제목 설정 함수 (파일 변경 시 초기화에 필요)
-    setWikiContent,         // 위키 본문 설정 함수 (파일 변경 시 초기화에 필요)
   } = useWikiUpload();
 
   // 새로운 통합 Slack 미리보기 훅 사용
@@ -70,6 +61,8 @@ const HomePage: React.FC = () => {
   const [manualLinks, setManualLinks] = useState<string[]>(['']);
   // 편집 가능한 최종 Slack 메시지 상태
   const [editableSlackMessage, setEditableSlackMessage] = useState<string>('');
+  const [srtFile, setSrtFile] = useState<File | null>(null); // 위키 업로드용 상태 유지
+  const [driveLink, setDriveLink] = useState<string>(''); // 위키 업로드용 상태 유지
 
   // --- 수동 링크 관리 핸들러 (HomePage에 유지) ---
   const handleManualLinkChange = useCallback((index: number, value: string) => {
@@ -104,11 +97,8 @@ const HomePage: React.FC = () => {
 
   // SRT 파일 입력 변경 시 처리
   const handleFileUploadChange = (file: File | null) => {
-    setSrtFile(file); // 파일 상태 업데이트 (useWikiUpload 훅)
-    // 새 파일 선택 시 이전 업로드 결과 초기화
-    setPageUrl(null);
-    setWikiTitle('');
-    setWikiContent(''); // wikiContent는 현재 UI 표시 안함
+    setSrtFile(file); 
+    clearUploadResult(); // 이전 결과 초기화
     clearUploadError();
   };
 
@@ -124,17 +114,8 @@ const HomePage: React.FC = () => {
       console.warn("No valid URLs provided for manual preview.");
       return; 
     }
-
-    const extractedIds = urls
-      .map(parsePageIdFromUrl)
-      .filter((id): id is string => id !== null);
-
-    if (extractedIds.length === 0) {
-      console.warn("Could not extract valid page IDs from the provided URLs.");
-      return;
-    }
     
-    generatePreview({ pageIds: extractedIds });
+    generatePreview({ pageUrls: urls }); // pageUrls로 원본 URL 배열 전달
   };
 
   // "전송" 버튼 핸들러
@@ -158,6 +139,25 @@ const HomePage: React.FC = () => {
       handleAddManualLink();
       setTimeout(() => handleManualLinkChange(currentLinks.length, pageUrl), 0); 
     }
+  };
+
+  // 위키 업로드 버튼 핸들러 
+  const handleUpload = () => {
+    // 유효성 검사
+    if (!srtFile) {
+      console.error("SRT 파일이 선택되지 않았습니다.");
+      // 사용자에게 알림 (예: Mantine Notification 사용 또는 Alert 컴포넌트 상태 업데이트)
+      return;
+    }
+    if (!driveLink.trim()) {
+      console.error("구글 드라이브 링크가 입력되지 않았습니다.");
+      return;
+    }
+    
+    // 에러/결과 초기화 및 훅 함수 호출
+    clearUploadError();
+    clearUploadResult(); 
+    uploadWiki({ srtFile, driveLink }); // 여기서 uploadWiki 호출
   };
 
   // --- 로딩 상태 관리 ---
@@ -221,7 +221,7 @@ const HomePage: React.FC = () => {
         )}
         {/* 페이지 생성 성공 시 URL 및 버튼 표시 */}
         {pageUrl && (
-          <Alert color="teal" title="페이지 생성 완료" mt="sm">
+          <Alert color="teal" title="페이지 생성 완료" mt="sm" onClose={clearUploadResult} withCloseButton>
             <Text>생성된 페이지 URL: <a href={pageUrl} target="_blank" rel="noopener noreferrer">{pageUrl}</a></Text>
              <Group mt="xs"> {/* marginTop: extra small */}
                 {/* URL 복사 버튼 */}
@@ -245,10 +245,6 @@ const HomePage: React.FC = () => {
              </Group>
           </Alert>
         )}
-        {/* 생성된 위키 제목 표시 */}
-        {wikiTitle && <Text mt="sm"><b>생성된 제목:</b> {wikiTitle}</Text>}
-        {/* 필요시 위키 본문 미리보기 표시 */}
-        {/* {wikiContent && <Textarea value={wikiContent} readOnly label="Generated Content Preview" autosize minRows={5} mt="sm"/>} */}
       </Paper>
 
       {/* === 2. Slack 메시지 생성 섹션 === */}

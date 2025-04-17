@@ -10,5 +10,6 @@ module.exports = {
   SPACE_KEY: process.env.SPACE_KEY,
   PARENT_PAGE_ID: '4139942192',
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,     
-  SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID       
+  SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID,       
+  SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL || 'YOUR_SLACK_WEBHOOK_URL_HERE' // 여기에 실제 Webhook URL을 넣거나 환경 변수를 사용하세요.
 };

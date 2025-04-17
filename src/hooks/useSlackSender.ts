@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { sendSlackMessage } from '../api/slackApi';
+import axios from 'axios';
 
 export const useSlackSender = () => {
   const [sendResult, setSendResult] = useState<string | null>(null);
@@ -14,22 +14,16 @@ export const useSlackSender = () => {
     
     setIsSending(true);
     setSendError(null);
-    setSendResult(null); // Clear previous result
+    setSendResult(null);
 
     try {
-      // Add <!here> mention before sending
-      const finalMessage = `<!here> ${message}`;
-      const result = await sendSlackMessage(finalMessage);
+      const response = await axios.post('/api/sendSlackMessage', { slackMessage: message });
       
-      if (result.error) {
-        // If the API wrapper returned an error object
-        throw new Error(result.details || result.error);
-      }
-      
-      setSendResult(result.message || 'Slack 메시지 전송 완료');
+      setSendResult(response.data.message || 'Slack 메시지 전송 완료');
     } catch (err: any) {
-      console.error('Slack Send Error:', err);
-      setSendError(err.message || 'Slack 메시지 전송 오류');
+      console.error('Slack Send Hook Error:', err);
+      const backendError = err.response?.data?.error || err.response?.data?.details;
+      setSendError(backendError || err.message || 'Slack 메시지 전송 오류');
     } finally {
       setIsSending(false);
     }

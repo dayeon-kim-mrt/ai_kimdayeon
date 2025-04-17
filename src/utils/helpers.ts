@@ -1,32 +1,7 @@
 /**
- * Confluence URL에서 Page ID를 추출하는 함수.
- * 예: "https://your-domain.atlassian.net/wiki/spaces/SPACEKEY/pages/123456789/Page+Title"
- * -> "123456789"
- */
-export function parsePageIdFromUrl(url: string): string | null {
-  if (!url) {
-    return null;
-  }
-  try {
-    const urlObject = new URL(url); 
-    // 정규 표현식을 사용하여 경로에서 마지막 숫자 시퀀스(페이지 ID)를 찾습니다.
-    // /pages/ 다음에 오는 숫자 그룹을 찾습니다.
-    const match = urlObject.pathname.match(/\/pages\/(\d+)/);
-    if (match && match[1]) {
-      return match[1]; // 첫 번째 캡처 그룹 (페이지 ID)
-    }
-    // URL 구조가 예상과 다를 경우 null 반환
-    return null;
-  } catch (error) {
-    // URL 파싱 중 에러 발생 시 (유효하지 않은 URL 등)
-    console.error(`Error parsing URL ${url}:`, error);
-    return null;
-  }
-}
-
-/**
  * 주어진 텍스트를 지정된 최대 청크 크기로 나눕니다.
  * 줄바꿈과 문장 경계를 고려하여 자연스럽게 분할하려고 시도합니다.
+ * (이 함수는 현재 프론트엔드에서 사용되지 않는 것으로 보이지만, 유틸리티로 남겨둘 수 있음)
  */
 export function chunkText(text: string, maxChunkSize: number): string[] {
   const chunks: string[] = [];
@@ -66,6 +41,7 @@ export function chunkText(text: string, maxChunkSize: number): string[] {
 
 /**
  * File 객체를 텍스트 문자열로 비동기적으로 읽습니다.
+ * (useWikiUpload 훅에서 사용됨)
  * @param file - 읽을 File 객체
  * @returns 파일 내용을 담은 Promise<string>
  */
