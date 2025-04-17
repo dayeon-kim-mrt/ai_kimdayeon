@@ -173,22 +173,20 @@ router.post('/generateSummary', async (req, res) => {
 
   const cleanText = textContent.replace(/<[^>]+>/g, "").trim();
   if (!cleanText) {
+    console.log('[/api/generateSummary] Clean text is empty, returning empty summary.');
     return res.json({ summary: "" });
   }
 
-  const prompt = `다음 내용을 1-2문장의 친근한 어조로 자연스럽게 요약해 주세요. 문장은 완전하게 마무리되어야 합니다.
-
-내용:
-${cleanText}
-
-요약:
-`;
+  // 프롬프트 수정: "정중한 존댓말" 사용 명시
+  const prompt = `다음 내용을 친근한 어조로 자연스럽고 단 한 문장으로, **정중한 존댓말**을 사용하여 요약해 주세요. 문장은 쉼표가 최대 1개 있을 수 있고, 짧고 간결하며, 완전하게 마무리되어야 합니다.\n\n내용:\n${cleanText}\n\n요약:\n`;
+  console.log(`[/api/generateSummary] Calling Claude with prompt starting with: "${prompt.slice(0, 100)}..."`);
 
   try {
     const summary = await callClaude(prompt, 300);
+    console.log(`[/api/generateSummary] Received summary from Claude: "${summary?.trim().slice(0, 50)}..."`);
     res.json({ summary: summary.trim() });
   } catch (err) {
-    console.error('Error generating summary:', err.message);
+    console.error('[/api/generateSummary] Error generating summary:', err.message);
     let fallback = cleanText.slice(0, 150);
     if (fallback.length > 0 && !fallback.endsWith('.')) {
       fallback += '...';
@@ -220,7 +218,7 @@ router.post('/generateSlackElements', async (req, res) => {
 
 ${pageDescriptions}
 
-각 페이지 내용과 가장 잘 어울리는 *단 하나의* 표준 Slack 이모지를 추천해주세요. (예: :rocket:, :chart_with_upwards_trend:, :gear:, :bulb:, :speech_balloon:, :book:, :tada:, :movie_camera: 등)
+각 페이지 내용과 가장 잘 어울리는 **단 하나의 유효한 표준 슬랙 내장 이모지 코드**를 추천해주세요. (예: :rocket:, :chart_with_upwards_trend:, :gear:, :bulb:, :speech_balloon:, :book:, :tada:, :movie_camera: 등). 반드시 **콜론(:)으로 감싸진 형식**이어야 합니다.
 그리고 전체 공지 메시지에 어울리는 짧고 자연스러운 *하나의* 마무리 멘트도 한국어로 제안해주세요. (예: "즐거운 하루 보내세요!", "업데이트 확인해보세요~", "유용한 정보가 되었기를 바랍니다.")
 
 결과는 반드시 다음 JSON 형식으로 응답해주세요:

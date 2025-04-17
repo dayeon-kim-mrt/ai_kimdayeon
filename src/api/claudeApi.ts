@@ -2,9 +2,11 @@
 
 import axios from 'axios';
 
+// 백엔드 API의 기본 URL (환경 변수 또는 설정 파일에서 가져오는 것이 좋음)
+// const API_BASE_URL = 'http://localhost:3001/api'; // 이 변수는 현재 사용되지 않음
+
 // 백엔드 API 서버들의 기본 URL (환경 변수에서 가져옴)
 const BASE_URL = process.env.REACT_APP_CLAUDE_API_BASE_URL; // Claude 관련 기능 API 서버 (제목, 요약, 요소 생성)
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;   // 일반 기능 API 서버 (페이지 생성, 페이지 정보 조회, Slack 전송 등)
 
 /**
  * 백엔드 API(/api/makeTitle)를 호출하여 주어진 스크립트 내용으로

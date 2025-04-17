@@ -151,7 +151,7 @@ router.post('/getPageTitles', async (req, res) => {
 
 /**
  * GET /api/getTodayConfluencePages
- * 오늘 생성 또는 수정된 Confluence 페이지 목록을 검색하여 기본 정보(제목, 요약, URL)를 반환.
+ * 오늘 생성 또는 수정된 Confluence 페이지 ID 목록을 검색하여 반환.
  * Confluence REST API(/rest/api/search)를 사용하여 CQL 쿼리로 검색.
  */
 router.get('/getTodayConfluencePages', async (req, res) => {
@@ -170,11 +170,11 @@ router.get('/getTodayConfluencePages', async (req, res) => {
     console.log(`Executing Confluence Search CQL: ${cqlRaw}`);
 
     const cql = encodeURIComponent(cqlRaw);
-    // 검색 API 호출 (expand=body.storage 로 본문 내용 일부 포함)
-    const url = `${confluenceBaseUrl}/rest/api/search?cql=${cql}&limit=50&expand=body.storage`;
+    // 검색 API 호출 시 expand 파라미터 제거 (ID만 필요)
+    const url = `${confluenceBaseUrl}/rest/api/search?cql=${cql}&limit=50`; 
     console.log(`Final Confluence search URL: ${url}`);
 
-    const authString = getAuthString(); // 헬퍼 함수 사용
+    const authString = getAuthString();
     const response = await axios.get(url, {
       headers: {
         'Authorization': `Basic ${authString}`,
@@ -185,35 +185,16 @@ router.get('/getTodayConfluencePages', async (req, res) => {
 
     console.log(`Confluence search returned ${response.data.results.length} results.`);
 
-    // 검색 결과에서 필요한 정보 추출 및 가공
-    const pages = response.data.results.map(result => {
-      const title = result.content.title || "제목 없음";
-      const pageId = result.content.id;
-      const spaceKey = result.content.space?.key || config.SPACE_KEY;
-      const pageUrl = `${confluenceBaseUrl}/spaces/${spaceKey}/pages/${pageId}`;
+    // 검색 결과에서 페이지 ID만 추출
+    const pageIds = response.data.results.map(result => result.content.id);
 
-      // 본문 요약 추출 시도 (body.storage 우선, 없으면 excerpt)
-      let summary = "";
-      if (result.content.body?.storage?.value) {
-        // 간단한 HTML 태그 제거 및 길이 제한
-        summary = result.content.body.storage.value.replace(/<[^>]+>/g, ' ').replace(/s+/g, ' ').trim().slice(0, 300);
-      }
-      if (!summary && result.excerpt) { // storage 내용 없으면 excerpt 사용
-        summary = result.excerpt.replace(/<[^>]+>/g, '').trim();
-      }
-      if (!summary) {
-        summary = "내용 요약 없음";
-      }
-
-      return { title, summary, pageUrl };
-    });
-
-    // 추출된 페이지 정보 배열 응답
-    res.json({ pages });
+    // 추출된 페이지 ID 배열 응답
+    res.json({ pageIds }); // { pageIds: [...] }
+    
   } catch (error) {
-    console.error('Error fetching today Confluence pages:', error.response ? error.response.data : error.message);
+    console.error('Error fetching today Confluence page IDs:', error.response ? error.response.data : error.message);
     res.status(500).json({
-      error: 'Failed to fetch today Confluence pages',
+      error: 'Failed to fetch today Confluence page IDs',
       details: error.response ? JSON.stringify(error.response.data) : error.message
     });
   }
