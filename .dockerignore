@@ -1,0 +1,39 @@
+# ./.dockerignore
+
+# Dependencies
+node_modules
+
+# Build artifacts
+build
+dist
+
+# Git files
+.git
+.gitignore
+
+# Environment variables files
+.env*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker specific files (avoid copying into the image itself)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# README and Markdown
+README.md
+*.md
+
+# Server specific files (to prevent copying into frontend stage if context is root)
+server/node_modules
+server/.env*
+server/Dockerfile
+server/.dockerignore
+
+# OS specific files
+.DS_Store
+Thumbs.db 

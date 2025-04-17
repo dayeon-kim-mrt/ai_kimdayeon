@@ -1,0 +1,41 @@
+# ./docker-compose.yml
+version: '3.8'
+
+services:
+  # Backend 서비스 (Node.js)
+  backend:
+    build:
+      context: ./server # server 디렉토리 기준 빌드
+      dockerfile: Dockerfile
+    container_name: ai_kimdayeon_backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001" # 호스트 3001 -> 컨테이너 3001
+    # 중요: 백엔드 환경 변수를 전달해야 합니다.
+    # server/.env 파일을 생성하고 그 안에 키=값 형태로 변수를 넣으세요.
+    # 예: CLAUDE_API_KEY=sk-...
+    env_file:
+      - ./server/.env # server 디렉토리의 .env 파일 사용
+    networks:
+      - app-network
+    # 필요시 볼륨 마운트 추가 (예: 로그 파일)
+    # volumes:
+    #   - ./server/logs:/usr/src/app/logs
+
+  # Frontend 서비스 (React + Nginx)
+  frontend:
+    build:
+      context: . # 프로젝트 루트 기준 빌드
+      dockerfile: Dockerfile
+    container_name: ai_kimdayeon_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80" # 호스트 80 -> 컨테이너 80 (HTTP)
+    depends_on:
+      - backend # 백엔드 서비스가 준비될 때까지 기다림 (연결 보장)
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge 
