@@ -1,12 +1,12 @@
 # ./docker-compose.yml
-version: '3.8'
+# version: '3.8' # 제거됨
 
 services:
   # Backend 서비스 (Node.js)
   backend:
     build:
-      context: ./server # server 디렉토리 기준 빌드
-      dockerfile: Dockerfile
+      context: . # 빌드 컨텍스트를 프로젝트 루트로 변경
+      dockerfile: ./server/Dockerfile # Dockerfile 경로 명시
     container_name: ai_kimdayeon_backend
     restart: unless-stopped
     ports:
@@ -16,6 +16,8 @@ services:
     # 예: CLAUDE_API_KEY=sk-...
     env_file:
       - ./server/.env # server 디렉토리의 .env 파일 사용
+    volumes:
+      - ./server/credentials.json:/usr/src/app/credentials.json:ro # credentials.json 마운트 (읽기 전용)
     networks:
       - app-network
     # 필요시 볼륨 마운트 추가 (예: 로그 파일)

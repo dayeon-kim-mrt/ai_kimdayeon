@@ -217,24 +217,24 @@ router.post('/generateSlackPreview', async (req, res) => {
  * Slack 메시지를 Bot Token과 Channel ID를 사용하여 전송 (chat.postMessage API 사용)
  */
 router.post('/sendSlackMessage', async (req, res) => {
-  const { slackMessage } = req.body;
+      const { slackMessage } = req.body;
   console.log('[POST /api/sendSlackMessage] Received request to send message using Bot Token.');
 
-  if (!slackMessage) {
+      if (!slackMessage) {
     console.log('[POST /api/sendSlackMessage] Error: No message provided.');
     return res.status(400).json({ error: '전송할 메시지가 없습니다.' });
-  }
-
+      }
+      
   // 설정 값 확인 (Bot Token, Channel ID)
-  const token = config.SLACK_BOT_TOKEN;
-  const channel = config.SLACK_CHANNEL_ID;
+      const token = config.SLACK_BOT_TOKEN;
+      const channel = config.SLACK_CHANNEL_ID;
   if (!token || !channel) {
     console.error('[POST /api/sendSlackMessage] Error: Slack Bot Token or Channel ID not configured.');
     return res.status(500).json({ error: 'Slack Bot Token 또는 Channel ID가 서버에 설정되지 않았습니다.' });
   }
 
-  const slackApiUrl = 'https://slack.com/api/chat.postMessage';
-
+      const slackApiUrl = 'https://slack.com/api/chat.postMessage';
+      
   try {
     // 메시지 전송 전에 <!here> 추가
     const messageText = `<!here> ${slackMessage}`;
@@ -242,31 +242,31 @@ router.post('/sendSlackMessage', async (req, res) => {
     console.log(`[POST /api/sendSlackMessage] Sending message to channel ${channel} via chat.postMessage...`);
     
     // Slack API 호출 (chat.postMessage 사용)
-    const response = await axios.post(slackApiUrl, {
+      const response = await axios.post(slackApiUrl, {
       channel: channel, // 채널 ID 사용
       text: messageText, // 메시지 내용
       link_names: 1 // @here 같은 멘션 활성화 위해 추가
       // 만약 블록 키트를 사용한다면 text 대신 blocks 필드를 사용해야 할 수 있습니다.
-    }, {
-      headers: {
+      }, {
+        headers: {
         'Authorization': `Bearer ${token}`, // Bot Token 사용
         'Content-Type': 'application/json; charset=utf-8'
-      }
-    });
-
+        }
+      });
+      
     // Slack API 응답 확인
-    if (!response.data.ok) {
+      if (!response.data.ok) {
       console.error(`[POST /api/sendSlackMessage] Slack API Error:`, response.data);
       throw new Error(`Slack API Error: ${response.data.error}`);
-    }
-    
+      }
+      
     console.log('[POST /api/sendSlackMessage] Message sent successfully via chat.postMessage.');
     res.json({ message: 'Slack 메시지 전송 완료', slackResponse: response.data });
 
-  } catch (error) {
+    } catch (error) {
     console.error('[POST /api/sendSlackMessage] Error sending message to Slack:', error.message || error);
     res.status(500).json({ error: 'Slack 메시지 전송 실패', details: error.message });
-  }
-});
-
+    }
+  });
+  
 module.exports = router;

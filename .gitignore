@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/server/node_modules
 /.pnp
 .pnp.js
 
@@ -10,6 +11,7 @@
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
@@ -22,6 +24,24 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-.env
-server/.env
-server/.env.local
+# Docker specific files (These are usually committed)
+# Dockerfile
+# .dockerignore
+# docker-compose.yml
+# nginx.conf
+
+# Environment variables files
+.env*
+server/.env*
+
+# Secrets / Credentials (NEVER commit these)
+server/credentials.json # Google Drive API credentials
+
+# OS specific files
+Thumbs.db
+
+# Misc
+/.cache
+/.idea
+/.vscode
+*.swp

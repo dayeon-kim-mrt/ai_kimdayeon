@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "audio-subtitle-tool"
+version = "0.1.0"
+description = "오디오 파일을 SRT 자막으로 변환하는 CLI 도구"
+authors = ["사용자 <user@example.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = ">=3.11.11,<3.12"
+click = "^8.1.7"
+tqdm = "^4.66.2"
+openai = "^1.30.1"
+ffmpeg-python = "^0.2.0"
+google-api-python-client = "^2.123.0"
+google-auth-httplib2 = "^0.2.0"
+google-auth-oauthlib = "^1.2.0"
+requests = "^2.31.0"
+python-dotenv = "^1.0.0"
+langchain = "^0.1.12"
+langchain-anthropic = "^0.1.4"
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = "^5.9.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+transcriber = "app.transcriber_cli:main"
+subtitle-burner = "app.subtitle_burner:main"
+drive-uploader = "app.drive_uploader:main"
+batch-subtitle-burner = "app.batch_subtitle_burner:main"
+writepage = "app.writepage:main"
+notice-to-slack = "app.notice_to_slack:main"

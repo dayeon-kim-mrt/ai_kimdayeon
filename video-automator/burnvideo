@@ -1,0 +1,11 @@
+filename=$1
+poetry run subtitle-burner \
+    -v input/${filename}.mp4 \
+    -s output/${filename}.srt  \
+    -o output/${filename}.mp4  \
+    -fc white \
+    -fs 18 \
+    -ow 1  \
+    -p 720p  \
+    -c h264  \
+    -f 10

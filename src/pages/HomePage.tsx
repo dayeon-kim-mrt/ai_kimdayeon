@@ -18,11 +18,26 @@ import {
   Space,
   Divider,
   Loader,
+  Progress,
 } from '@mantine/core';
-import { IconCirclePlus, IconTrash, IconClipboardCopy, IconCheck, IconAlertCircle, IconSend } from '@tabler/icons-react';
+import { IconCirclePlus, IconTrash, IconClipboardCopy, IconCheck, IconAlertCircle, IconSend, IconVideo, IconDownload } from '@tabler/icons-react';
 import { useWikiUpload } from '../hooks/useWikiUpload';           // 위키 페이지 생성 (SRT + Drive Link) 훅
 import useSlackPreview from '../hooks/useSlackPreview';      // 새로운 통합 훅 추가
 import { useSlackSender } from '../hooks/useSlackSender';          // Slack 메시지 전송 훅
+import axios from 'axios'; // API 호출을 위해 axios 추가
+
+// --- Helper for API Base URL ---
+// It's better to get this from config or env variable
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
+
+// Define processing status types
+type VideoProcessingStatus =
+  | 'idle'
+  | 'uploading'
+  | 'processing_srt' // Simplified status
+  | 'processing_ffmpeg' // Simplified status
+  | 'complete'
+  | 'error';
 
 const HomePage: React.FC = () => {
   // --- 커스텀 훅 사용 ---
@@ -63,6 +78,13 @@ const HomePage: React.FC = () => {
   const [editableSlackMessage, setEditableSlackMessage] = useState<string>('');
   const [srtFile, setSrtFile] = useState<File | null>(null); // 위키 업로드용 상태 유지
   const [driveLink, setDriveLink] = useState<string>(''); // 위키 업로드용 상태 유지
+
+  // --- 영상 처리 관련 새로운 상태 ---
+  const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
+  const [videoProcessingStatus, setVideoProcessingStatus] = useState<VideoProcessingStatus>('idle');
+  const [processedVideoFilename, setProcessedVideoFilename] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [isVideoProcessing, setIsVideoProcessing] = useState<boolean>(false); // 전체 처리 중 상태
 
   // --- 수동 링크 관리 핸들러 (HomePage에 유지) ---
   const handleManualLinkChange = useCallback((index: number, value: string) => {
@@ -160,20 +182,148 @@ const HomePage: React.FC = () => {
     uploadWiki({ srtFile, driveLink }); // 여기서 uploadWiki 호출
   };
 
+  // --- 영상 처리 관련 새로운 핸들러 ---
+  const handleVideoFileChange = (file: File | null) => {
+    setSelectedVideoFile(file);
+    setVideoProcessingStatus('idle');
+    setProcessedVideoFilename(null);
+    setVideoError(null);
+    setIsVideoProcessing(false);
+  };
+
+  const handleProcessVideo = async () => {
+    if (!selectedVideoFile) {
+      setVideoError('처리할 MP4 파일을 선택해주세요.');
+      return;
+    }
+
+    setIsVideoProcessing(true);
+    setVideoProcessingStatus('uploading'); // Start with uploading status
+    setVideoError(null);
+    setProcessedVideoFilename(null);
+
+    const formData = new FormData();
+    formData.append('video', selectedVideoFile); // 'video'는 백엔드 upload.single('video')와 일치해야 함
+
+    try {
+      // Simulate status updates - real-time updates are more complex
+      // For now, we just wait for the whole process to finish
+      console.log('Sending video to backend for processing...');
+      const response = await axios.post(`${API_BASE_URL}/api/video/process-video`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        // Optional: Add timeout
+        // timeout: 300000, // e.g., 5 minutes timeout
+      });
+
+      // Request finished, assume backend process completed
+      setVideoProcessingStatus('complete');
+      setProcessedVideoFilename(response.data.processedFilename);
+      console.log('Video processing successful:', response.data);
+
+    } catch (err: any) {
+      console.error('Video processing failed:', err);
+      setVideoProcessingStatus('error');
+      if (axios.isAxiosError(err) && err.response) {
+        setVideoError(err.response.data?.message || err.response.data?.error || '영상 처리 중 오류가 발생했습니다.');
+      } else {
+        setVideoError('영상 처리 중 오류가 발생했습니다. 서버 연결을 확인하세요.');
+      }
+    } finally {
+      setIsVideoProcessing(false);
+    }
+  };
+
+  // Status message mapping
+  const getStatusMessage = (): string => {
+    switch (videoProcessingStatus) {
+      case 'idle': return 'MP4 파일을 선택하고 처리 시작 버튼을 누르세요.';
+      case 'uploading': return '영상 업로드 및 처리 중... 시간이 걸릴 수 있습니다. 서버 로그를 확인하세요.'; // Simplified message
+      case 'processing_srt': return '자막(SRT) 생성 중... 서버 로그를 확인하세요.'; // Kept for reference, but combined above
+      case 'processing_ffmpeg': return '자막을 영상에 입히는 중... 서버 로그를 확인하세요.'; // Kept for reference, but combined above
+      case 'complete': return '영상 처리가 완료되었습니다! 아래 버튼으로 다운로드하세요.';
+      case 'error': return `오류 발생: ${videoError || '알 수 없는 오류'}`;
+      default: return '';
+    }
+  };
+
   // --- 로딩 상태 관리 ---
   // 전체 로딩 상태 결정 (선택적, 단일 오버레이용)
-  const isOverallLoading = isUploading || isPreviewLoading || isSending;
+  const isOverallLoading = isUploading || isPreviewLoading || isSending || isVideoProcessing;
 
   // --- JSX 렌더링 ---
   // UI 구조 정의
   return (
     <Container size="md" my="xl">
       <Title order={1} ta="center" mb="xl">
-        AI Confluence to Slack
+        AI Confluence to Slack (and Video Subtitler!)
       </Title>
 
       {/* 전체 로딩 오버레이 */}
       <LoadingOverlay visible={isOverallLoading} overlayProps={{ radius: "sm", blur: 2 }} />
+
+      {/* === 새로운 섹션: 영상 자막 생성 및 삽입 === */}
+      <Paper shadow="xs" p="md" mb="lg">
+        <h2>영상 자막 생성 및 삽입</h2>
+        <FileInput
+            mb="sm"
+            label="MP4 영상 파일 첨부"
+            placeholder="MP4 파일을 선택하세요"
+            accept="video/mp4" // accept 속성 사용
+            value={selectedVideoFile}
+            onChange={handleVideoFileChange}
+            clearable
+            leftSection={<IconVideo size={16} />}
+            disabled={isVideoProcessing} // 처리 중 비활성화
+        />
+        <Button
+            onClick={handleProcessVideo}
+            disabled={!selectedVideoFile || isVideoProcessing} // 파일 없거나 처리 중일 때 비활성화
+            loading={isVideoProcessing && videoProcessingStatus !== 'complete' && videoProcessingStatus !== 'error'} // 완료/에러 아닐때만 로딩 표시
+            mb="sm"
+        >
+            자막 생성 및 영상 만들기
+        </Button>
+
+        {/* 상태 메시지 표시 */}
+        {videoProcessingStatus !== 'idle' && (
+             <Alert
+                icon={videoProcessingStatus === 'error' ? <IconAlertCircle size={16}/> : (videoProcessingStatus === 'complete' ? <IconCheck size={16}/> : <Loader size="xs"/>)}
+                title={
+                  videoProcessingStatus === 'error' ? '오류' : 
+                  videoProcessingStatus === 'complete' ? '완료' : '처리 중'
+                }
+                color={
+                  videoProcessingStatus === 'error' ? 'red' : 
+                  videoProcessingStatus === 'complete' ? 'teal' : 'blue'
+                }
+                mb="sm"
+             >
+                {getStatusMessage()}
+             </Alert>
+        )}
+
+        {/* 다운로드 버튼 (완료 시 표시) */}
+        {videoProcessingStatus === 'complete' && processedVideoFilename && (
+            <Button
+                component="a" // 링크처럼 동작하도록 설정
+                href={`${API_BASE_URL}/api/video/download-video/${processedVideoFilename}`}
+                download // 브라우저에게 다운로드하도록 지시
+                leftSection={<IconDownload size={16} />}
+                variant="outline"
+            >
+                결과 영상 다운로드 ({processedVideoFilename})
+            </Button>
+        )}
+         {/* 에러 발생 시 재시도 등을 위한 버튼 (선택적) */}
+         {videoProcessingStatus === 'error' && (
+             <Button onClick={handleVideoFileChange.bind(null, null)} color="gray" variant="outline" size="xs" ml="sm">
+                다시 시도 (파일 재선택)
+             </Button>
+         )}
+      </Paper>
+      <Divider my="xl" /> {/* 섹션 구분선 추가 */}
 
       {/* === 1. 위키 업로드 섹션 === */}
       <Paper shadow="xs" p="md" mb="lg">
@@ -188,6 +338,7 @@ const HomePage: React.FC = () => {
                 onChange={handleFileUploadChange} // 파일 변경 시 핸들러 연결
                 clearable // 파일 선택 취소 버튼 표시
                 style={{ flexGrow: 1 }} // 그룹 내에서 가능한 많은 공간 차지
+                disabled={isOverallLoading} // 전체 로딩 시 비활성화
             />
         </Group>
         {/* 구글 드라이브 링크 입력 */}
@@ -198,6 +349,7 @@ const HomePage: React.FC = () => {
           value={driveLink} // 링크 상태 연결
           onChange={(e) => setDriveLink(e.target.value)} // 입력 변경 시 상태 업데이트
           required // 필수 입력 필드 표시
+          disabled={isOverallLoading} // 전체 로딩 시 비활성화
         />
         {/* 위키 생성 버튼 */}
         <Button

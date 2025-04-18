@@ -1,0 +1,2 @@
+filename=$1
+poetry run transcriber --source-file input/${filename}.mp4 -o output/${filename}.srt

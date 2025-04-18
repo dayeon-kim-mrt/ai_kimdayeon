@@ -1,0 +1,4 @@
+# Directories for video processing temporary files
+/uploads/
+/processing/
+/output/ 
