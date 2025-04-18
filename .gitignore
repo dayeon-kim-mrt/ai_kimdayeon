@@ -45,3 +45,6 @@ Thumbs.db
 /.idea
 /.vscode
 *.swp
+
+# Ignore sensitive credential files
+server/credentials.json
