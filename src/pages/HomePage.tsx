@@ -19,8 +19,9 @@ import {
   Divider,
   Loader,
   Progress,
+  Anchor,
 } from '@mantine/core';
-import { IconCirclePlus, IconTrash, IconClipboardCopy, IconCheck, IconAlertCircle, IconSend, IconVideo, IconDownload } from '@tabler/icons-react';
+import { IconCirclePlus, IconTrash, IconClipboardCopy, IconCheck, IconAlertCircle, IconSend, IconVideo, IconDownload, IconUpload, IconBook } from '@tabler/icons-react';
 import { useWikiUpload } from '../hooks/useWikiUpload';           // 위키 페이지 생성 (SRT + Drive Link) 훅
 import useSlackPreview from '../hooks/useSlackPreview';      // 새로운 통합 훅 추가
 import { useSlackSender } from '../hooks/useSlackSender';          // Slack 메시지 전송 훅
@@ -46,11 +47,11 @@ const HomePage: React.FC = () => {
   // 위키 업로드 관련 상태 및 함수
   const {
     pageUrl,                // 생성된 위키 페이지 URL 상태
-    isUploading,            // 위키 업로드 진행 중 여부 상태
-    uploadError,            // 위키 업로드 관련 에러 메시지 상태
+    isUploading: isWikiUploading,            // 위키 업로드 진행 중 여부 상태
+    uploadError: wikiUploadError,            // 위키 업로드 관련 에러 메시지 상태
     uploadWiki,             // 변경된 업로드 함수
     clearUploadResult,      // 결과 초기화 함수
-    clearUploadError,       // 업로드 에러 메시지 초기화 함수
+    clearUploadError: clearWikiUploadError,       // 업로드 에러 메시지 초기화 함수
   } = useWikiUpload();
 
   // 새로운 통합 Slack 미리보기 훅 사용
@@ -83,8 +84,17 @@ const HomePage: React.FC = () => {
   const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
   const [videoProcessingStatus, setVideoProcessingStatus] = useState<VideoProcessingStatus>('idle');
   const [processedVideoFilename, setProcessedVideoFilename] = useState<string | null>(null);
+  const [generatedSrtFilename, setGeneratedSrtFilename] = useState<string | null>(null); // <-- SRT 파일 이름 저장 상태
   const [videoError, setVideoError] = useState<string | null>(null);
   const [isVideoProcessing, setIsVideoProcessing] = useState<boolean>(false); // 전체 처리 중 상태
+
+  // --- Google Drive 업로드 관련 새로운 상태 ---
+  const [isUploadingToDrive, setIsUploadingToDrive] = useState<boolean>(false);
+  const [driveUploadResult, setDriveUploadResult] = useState<string | null>(null); // Stores success message or link
+  const [driveUploadError, setDriveUploadError] = useState<string | null>(null);
+
+  // --- 자동 Wiki 생성 관련 상태 ---
+  const [isCreatingWiki, setIsCreatingWiki] = useState<boolean>(false); // Wiki 생성 로딩 상태
 
   // --- 수동 링크 관리 핸들러 (HomePage에 유지) ---
   const handleManualLinkChange = useCallback((index: number, value: string) => {
@@ -121,7 +131,7 @@ const HomePage: React.FC = () => {
   const handleFileUploadChange = (file: File | null) => {
     setSrtFile(file); 
     clearUploadResult(); // 이전 결과 초기화
-    clearUploadError();
+    clearWikiUploadError();
   };
 
   // "오늘의 Wiki" 버튼 핸들러 - 새 훅의 함수 호출
@@ -164,22 +174,15 @@ const HomePage: React.FC = () => {
   };
 
   // 위키 업로드 버튼 핸들러 
-  const handleUpload = () => {
-    // 유효성 검사
-    if (!srtFile) {
-      console.error("SRT 파일이 선택되지 않았습니다.");
-      // 사용자에게 알림 (예: Mantine Notification 사용 또는 Alert 컴포넌트 상태 업데이트)
-      return;
-    }
-    if (!driveLink.trim()) {
-      console.error("구글 드라이브 링크가 입력되지 않았습니다.");
+  const handleManualUpload = () => {
+    if (!srtFile || !driveLink.trim()) {
+      console.error("SRT 파일이 선택되지 않았거나 구글 드라이브 링크가 입력되지 않았습니다.");
       return;
     }
     
-    // 에러/결과 초기화 및 훅 함수 호출
-    clearUploadError();
+    clearWikiUploadError();
     clearUploadResult(); 
-    uploadWiki({ srtFile, driveLink }); // 여기서 uploadWiki 호출
+    uploadWiki({ srtFile, driveLink });
   };
 
   // --- 영상 처리 관련 새로운 핸들러 ---
@@ -187,8 +190,15 @@ const HomePage: React.FC = () => {
     setSelectedVideoFile(file);
     setVideoProcessingStatus('idle');
     setProcessedVideoFilename(null);
+    setGeneratedSrtFilename(null);
     setVideoError(null);
     setIsVideoProcessing(false);
+    setIsUploadingToDrive(false);
+    setDriveUploadResult(null);
+    setDriveUploadError(null);
+    setIsCreatingWiki(false);
+    clearWikiUploadError();
+    clearUploadResult();
   };
 
   const handleProcessVideo = async () => {
@@ -201,25 +211,23 @@ const HomePage: React.FC = () => {
     setVideoProcessingStatus('uploading'); // Start with uploading status
     setVideoError(null);
     setProcessedVideoFilename(null);
+    setIsUploadingToDrive(false);
+    setDriveUploadResult(null); 
+    setDriveUploadError(null);
 
     const formData = new FormData();
-    formData.append('video', selectedVideoFile); // 'video'는 백엔드 upload.single('video')와 일치해야 함
+    formData.append('video', selectedVideoFile);
 
     try {
-      // Simulate status updates - real-time updates are more complex
-      // For now, we just wait for the whole process to finish
       console.log('Sending video to backend for processing...');
       const response = await axios.post(`${API_BASE_URL}/api/video/process-video`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        // Optional: Add timeout
-        // timeout: 300000, // e.g., 5 minutes timeout
       });
-
-      // Request finished, assume backend process completed
       setVideoProcessingStatus('complete');
       setProcessedVideoFilename(response.data.processedFilename);
+      setGeneratedSrtFilename(response.data.srtFilename);
       console.log('Video processing successful:', response.data);
 
     } catch (err: any) {
@@ -242,15 +250,85 @@ const HomePage: React.FC = () => {
       case 'uploading': return '영상 업로드 및 처리 중... 시간이 걸릴 수 있습니다. 서버 로그를 확인하세요.'; // Simplified message
       case 'processing_srt': return '자막(SRT) 생성 중... 서버 로그를 확인하세요.'; // Kept for reference, but combined above
       case 'processing_ffmpeg': return '자막을 영상에 입히는 중... 서버 로그를 확인하세요.'; // Kept for reference, but combined above
-      case 'complete': return '영상 처리가 완료되었습니다! 아래 버튼으로 다운로드하세요.';
+      case 'complete': return '영상 처리가 완료되었습니다! 아래 버튼으로 다운로드 또는 Drive 업로드하세요.'; // Modified message
       case 'error': return `오류 발생: ${videoError || '알 수 없는 오류'}`;
       default: return '';
     }
   };
 
+  // --- Google Drive 업로드 핸들러 --- 
+  const handleUploadToDrive = async () => {
+    if (!processedVideoFilename) {
+      setDriveUploadError('업로드할 처리된 영상 파일 정보가 없습니다.');
+      return;
+    }
+
+    setIsUploadingToDrive(true);
+    setDriveUploadResult(null);
+    setDriveUploadError(null);
+
+    try {
+      console.log(`Requesting Google Drive upload for: ${processedVideoFilename}`);
+      const response = await axios.post(`${API_BASE_URL}/api/video/upload-to-drive`, {
+        processedFilename: processedVideoFilename, // Send the filename in the body
+      });
+
+      console.log('Google Drive upload successful:', response.data);
+      setDriveUploadResult(response.data.driveLink || response.data.message); // Store link or message
+
+    } catch (err: any) {
+      console.error('Google Drive upload failed:', err);
+      if (axios.isAxiosError(err) && err.response) {
+        setDriveUploadError(err.response.data?.message || err.response.data?.error || 'Google Drive 업로드 중 오류 발생');
+      } else {
+        setDriveUploadError('Google Drive 업로드 중 오류 발생 (서버 연결 확인)');
+      }
+    } finally {
+      setIsUploadingToDrive(false);
+    }
+  };
+
+  // --- 새로운 핸들러: 자동 Wiki 생성 --- 
+  const handleCreateWikiPage = async () => {
+    if (!generatedSrtFilename || !driveUploadResult || !driveUploadResult.startsWith('http')) {
+      console.error('SRT 파일 이름 또는 유효한 Drive 링크 X.');
+      return;
+    }
+
+    setIsCreatingWiki(true);
+    clearWikiUploadError(); 
+    clearUploadResult(); 
+
+    try {
+      // 1. Fetch SRT content
+      console.log(`Fetching SRT content for: ${generatedSrtFilename}`);
+      const srtResponse = await axios.get(`${API_BASE_URL}/api/video/srt-content`, {
+        params: { filename: generatedSrtFilename },
+        responseType: 'text' 
+      });
+      const srtContent = srtResponse.data;
+
+      // 2. Create File object from content
+      const newSrtFile = new File([srtContent], generatedSrtFilename, { type: 'text/plain' });
+
+      // 3. Extract Drive link (assuming driveUploadResult holds the link)
+      const actualDriveLink = driveUploadResult; 
+
+      // 4. Call existing uploadWiki hook function
+      console.log('Calling uploadWiki with generated SRT file and Drive link...');
+      await uploadWiki({ srtFile: newSrtFile, driveLink: actualDriveLink });
+      console.log('uploadWiki call finished.');
+
+    } catch (err: any) {
+      console.error('Automated Wiki page creation failed:', err);
+    } finally {
+      setIsCreatingWiki(false);
+    }
+  };
+
   // --- 로딩 상태 관리 ---
   // 전체 로딩 상태 결정 (선택적, 단일 오버레이용)
-  const isOverallLoading = isUploading || isPreviewLoading || isSending || isVideoProcessing;
+  const isOverallLoading = isWikiUploading || isPreviewLoading || isSending || isVideoProcessing || isUploadingToDrive || isCreatingWiki;
 
   // --- JSX 렌더링 ---
   // UI 구조 정의
@@ -275,12 +353,12 @@ const HomePage: React.FC = () => {
             onChange={handleVideoFileChange}
             clearable
             leftSection={<IconVideo size={16} />}
-            disabled={isVideoProcessing} // 처리 중 비활성화
+            disabled={isVideoProcessing || isUploadingToDrive} // Also disable during Drive upload
         />
         <Button
             onClick={handleProcessVideo}
-            disabled={!selectedVideoFile || isVideoProcessing} // 파일 없거나 처리 중일 때 비활성화
-            loading={isVideoProcessing && videoProcessingStatus !== 'complete' && videoProcessingStatus !== 'error'} // 완료/에러 아닐때만 로딩 표시
+            disabled={!selectedVideoFile || isVideoProcessing || isUploadingToDrive} 
+            loading={isVideoProcessing}
             mb="sm"
         >
             자막 생성 및 영상 만들기
@@ -304,19 +382,58 @@ const HomePage: React.FC = () => {
              </Alert>
         )}
 
-        {/* 다운로드 버튼 (완료 시 표시) */}
+        {/* --- 결과 버튼 그룹 (처리 완료 시) --- */}
         {videoProcessingStatus === 'complete' && processedVideoFilename && (
+          <Group mt="sm"> {/* Group buttons together */}
+            {/* 다운로드 버튼 */}
             <Button
-                component="a" // 링크처럼 동작하도록 설정
-                href={`${API_BASE_URL}/api/video/download-video/${processedVideoFilename}`}
-                download // 브라우저에게 다운로드하도록 지시
-                leftSection={<IconDownload size={16} />}
-                variant="outline"
+              component="a"
+              href={`${API_BASE_URL}/api/video/download-video/${processedVideoFilename}`}
+              download
+              leftSection={<IconDownload size={16} />}
+              variant="outline"
+              disabled={isUploadingToDrive} // Disable while uploading to Drive
             >
-                결과 영상 다운로드 ({processedVideoFilename})
+              결과 영상 다운로드
             </Button>
+
+            {/* Google Drive 업로드 버튼 */}
+            <Button
+              onClick={handleUploadToDrive}
+              leftSection={<IconUpload size={16} />} // Use upload icon
+              loading={isUploadingToDrive} // Show loading spinner
+              disabled={isUploadingToDrive} // Disable while uploading
+            >
+              Google Drive에 업로드
+            </Button>
+          </Group>
         )}
-         {/* 에러 발생 시 재시도 등을 위한 버튼 (선택적) */}
+
+        {/* Google Drive 업로드 결과/오류 표시 */}
+        {isUploadingToDrive && !driveUploadError && (
+             <Alert icon={<Loader size="xs"/>} title="Drive 업로드 중..." color="blue" mt="sm">
+                 Google Drive에 업로드하고 있습니다...
+             </Alert>
+        )}
+        {driveUploadError && (
+            <Alert icon={<IconAlertCircle size={16}/>} color="red" title="Drive 업로드 오류" mt="sm" withCloseButton onClose={() => setDriveUploadError(null)}>
+                {driveUploadError}
+            </Alert>
+        )}
+        {driveUploadResult && (
+             <Alert icon={<IconCheck size={16}/>} color="teal" title="Drive 업로드 성공" mt="sm" withCloseButton={!(isCreatingWiki || isWikiUploading)} onClose={() => {setDriveUploadResult(null); clearUploadResult(); /* Clear wiki result too */ }}>
+                 {driveUploadResult.startsWith('http') ? (
+                     <Text>업로드 완료! 링크: <Anchor href={driveUploadResult} target="_blank">{driveUploadResult}</Anchor></Text>
+                 ) : (
+                     <Text>{driveUploadResult}</Text>
+                 )}
+                 <Button mt="xs" leftSection={<IconBook size={16}/>} onClick={handleCreateWikiPage} loading={isCreatingWiki || isWikiUploading} disabled={!generatedSrtFilename || !driveUploadResult || !driveUploadResult.startsWith('http') || isOverallLoading}> Confluence 페이지 생성 </Button>
+                 {wikiUploadError && !isCreatingWiki && !isWikiUploading && ( <Alert color="orange" title="Wiki 생성 오류" mt="sm" withCloseButton onClose={clearWikiUploadError}>{wikiUploadError}</Alert> )}
+                 {pageUrl && !isCreatingWiki && !isWikiUploading && ( <Alert color="lime" title="Wiki 생성 완료" mt="sm" withCloseButton onClose={clearUploadResult}> 생성된 Wiki 페이지: <Anchor href={pageUrl} target="_blank">{pageUrl}</Anchor> </Alert> )}
+             </Alert>
+        )}
+
+         {/* 에러 발생 시 재시도 버튼 */}
          {videoProcessingStatus === 'error' && (
              <Button onClick={handleVideoFileChange.bind(null, null)} color="gray" variant="outline" size="xs" ml="sm">
                 다시 시도 (파일 재선택)
@@ -353,26 +470,26 @@ const HomePage: React.FC = () => {
         />
         {/* 위키 생성 버튼 */}
         <Button
-          onClick={handleUpload} // 클릭 시 업로드 핸들러 실행
+          onClick={handleManualUpload} // 클릭 시 업로드 핸들러 실행
           disabled={isOverallLoading || !srtFile || !driveLink.trim()} // 업로드 중이거나 필수 입력값이 없으면 비활성화
-          loading={isUploading} // 업로드 중일 때 로딩 스피너 표시
+          loading={isWikiUploading} // 업로드 중일 때 로딩 스피너 표시
         >
           위키 페이지 생성
         </Button>
         {/* 업로드 에러 메시지 표시 */}
-        {uploadError && (
+        {wikiUploadError && isWikiUploading && (
             <Alert
               color="red"
               title="업로드 오류"
               mt="sm" // marginTop: small
-              onClose={clearUploadError} // 닫기 버튼 클릭 시 에러 초기화
+              onClose={clearWikiUploadError} // 닫기 버튼 클릭 시 에러 초기화
               withCloseButton // 닫기 버튼 표시
             >
-              {uploadError}
+              {wikiUploadError}
             </Alert>
         )}
         {/* 페이지 생성 성공 시 URL 및 버튼 표시 */}
-        {pageUrl && (
+        {pageUrl && !isWikiUploading && (
           <Alert color="teal" title="페이지 생성 완료" mt="sm" onClose={clearUploadResult} withCloseButton>
             <Text>생성된 페이지 URL: <a href={pageUrl} target="_blank" rel="noopener noreferrer">{pageUrl}</a></Text>
              <Group mt="xs"> {/* marginTop: extra small */}

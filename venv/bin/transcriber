@@ -1,0 +1,6 @@
+#!/Users/dayeon-kim/Desktop/AI_Lab/ai-kimdayeon/venv/bin/python
+import sys
+from app.transcriber_cli import main
+
+if __name__ == '__main__':
+    sys.exit(main())

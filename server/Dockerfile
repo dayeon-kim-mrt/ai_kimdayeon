@@ -42,14 +42,18 @@ WORKDIR /usr/src/app
 COPY server/package*.json ./
 RUN npm install --only=production
 
-# --- Poetry 프로젝트 설정 (video-automator 관련) ---
-COPY video-automator/pyproject.toml video-automator/poetry.lock* ./video-automator/
-# pyenv global 설정 및 PATH 설정으로 인해 올바른 Python(3.11.11)과 poetry 사용됨
-RUN cd video-automator && poetry install --no-root --only main
+# --- Poetry 프로젝트 설정 (변경된 경로 사용) ---
+# 빌드 컨텍스트 루트의 server/video_processing_scripts 에서 파일을 복사하여
+# 컨테이너 WORKDIR(/usr/src/app) 아래 video_processing_scripts 폴더로 복사
+COPY server/video_processing_scripts/pyproject.toml server/video_processing_scripts/poetry.lock* ./video_processing_scripts/
+# 컨테이너 WORKDIR 아래의 video_processing_scripts 폴더로 이동하여 poetry 실행
+RUN cd video_processing_scripts && poetry install --no-root --only main
 
 # --- 나머지 소스 코드 복사 ---
-COPY server/ . 
-COPY video-automator/ ./video-automator/
+# 서버 코드 복사
+COPY server/ .
+# 파이썬 스크립트 코드 복사 (변경된 경로)
+COPY server/video_processing_scripts/ ./video_processing_scripts/
 
 # 5. 애플리케이션 포트 노출
 EXPOSE 3001

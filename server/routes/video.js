@@ -106,8 +106,7 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
   const finalVideoPath = path.join(OUTPUT_DIR, finalVideoFilename);
 
   // Define the working directory for poetry commands (relative to WORKDIR /usr/src/app)
-  // const poetryCwd = path.join(__dirname, '../../video-automator'); // Path to video-automator from server/routes
-  const containerPoetryCwd = 'video-automator'; // Use relative path inside container for commands
+  const containerPoetryCwd = 'video_processing_scripts'; // Use the new folder name
 
   try {
     // Step 1: Run transcriber using poetry run
@@ -118,7 +117,7 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
         '--source-file', originalVideoPath, // Provide absolute path inside container
         '--output-file', srtOutputPath     // Provide absolute path inside container
         // Add other arguments like --model, --filter-filler if needed based on README
-    ], { cwd: containerPoetryCwd }); // Specify CWD for poetry
+    ], { cwd: containerPoetryCwd }); // Use updated cwd
     console.log(`SRT file generation command finished. Checking for: ${srtOutputPath}`);
 
     if (!fs.existsSync(srtOutputPath)) {
@@ -135,7 +134,7 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
         '--subtitle-file', srtOutputPath,   // Absolute path inside container
         '--output-file', finalVideoPath     // Absolute path inside container
         // Add other arguments like --preset, --font-size if needed
-    ], { cwd: containerPoetryCwd }); // Specify CWD for poetry
+    ], { cwd: containerPoetryCwd }); // Use updated cwd
     console.log(`Subtitle burning command finished. Checking for: ${finalVideoPath}`);
 
     if (!fs.existsSync(finalVideoPath)) {
@@ -143,12 +142,18 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
     }
     console.log(`Final video found at: ${finalVideoPath}`);
 
-    // Clean up original uploaded file and SRT file
+    // Clean up original uploaded file (optional, do it after success)
     fs.unlinkSync(originalVideoPath);
-    fs.unlinkSync(srtOutputPath);
+    // --- Keep the SRT file for potential Wiki creation ---
+    // fs.unlinkSync(srtOutputPath); // <-- Comment out or remove this line
 
     console.log('Video processing successful');
-    res.json({ message: 'Video processed successfully', processedFilename: finalVideoFilename });
+    // --- Return both video and SRT filenames ---
+    res.json({
+      message: 'Video processed successfully',
+      processedFilename: finalVideoFilename,
+      srtFilename: srtFilename // <-- Add srtFilename here
+    });
 
   } catch (error) {
     console.error('Error processing video:', error);
@@ -160,6 +165,74 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
     // Send only the error message part to the frontend
     const errorMessage = (error instanceof Error) ? error.message : String(error);
     res.status(500).json({ message: 'Error processing video', error: errorMessage });
+  }
+});
+
+// POST /api/video/upload-to-drive
+// Handles uploading the processed video file to Google Drive
+router.post('/upload-to-drive', async (req, res) => {
+  const { processedFilename } = req.body; // Get filename from request body
+
+  if (!processedFilename) {
+    return res.status(400).json({ message: 'Processed filename is required.' });
+  }
+
+  // Basic security check
+  if (processedFilename.includes('..') || processedFilename.includes('/')) {
+    return res.status(400).send('Invalid filename.');
+  }
+
+  const finalVideoPath = path.join(OUTPUT_DIR, processedFilename);
+  const containerPoetryCwd = 'video_processing_scripts'; // Use the new folder name
+
+  // --- Specify the target Google Shared Drive and folder ---
+  const targetSharedDrive = 'MY REALTRIP'; // Correct Shared Drive name
+  const targetDriveFolder = 'AI Lab';      // Correct folder name
+
+  console.log(`Upload to Shared Drive requested for: ${finalVideoPath} to Shared Drive: "${targetSharedDrive}", Folder: "${targetDriveFolder}"`);
+
+  try {
+    // Check if the file actually exists before trying to upload
+    if (!fs.existsSync(finalVideoPath)) {
+      console.error(`File not found for Drive upload: ${finalVideoPath}`);
+      return res.status(404).json({ message: 'Processed video file not found.' });
+    }
+
+    // Step 3: Run drive-uploader using poetry run
+    console.log(`Starting Google Drive upload for: ${finalVideoPath}`);
+    const uploadArgs = [
+        'run',
+        'drive-uploader',
+        'upload',
+        '--file', finalVideoPath, // Absolute path inside container
+        '--credentials', '/usr/src/app/credentials.json', // Path to credentials
+        '--token', '/usr/src/app/token.pickle'           // Path to token file
+    ];
+
+    // Add shared drive option if defined
+    if (targetSharedDrive) {
+        uploadArgs.push('--shared-drive', targetSharedDrive);
+    }
+    // Add folder option if defined (for within the shared drive)
+    if (targetDriveFolder) {
+        uploadArgs.push('--folder', targetDriveFolder); // Add the --folder option
+    }
+
+    const uploadResult = await runScript('poetry', uploadArgs, { cwd: containerPoetryCwd }); // Use updated cwd
+
+    console.log('Google Drive upload command finished.');
+    console.log('Drive uploader stdout:', uploadResult.stdout);
+
+    // Try to parse the Drive link from stdout (adjust based on actual script output)
+    const driveLinkMatch = uploadResult.stdout.match(/https?:\/\/drive\.google\.com\/file\/d\/[^\s]+/);
+    const driveLink = driveLinkMatch ? driveLinkMatch[0] : 'Upload successful (Link not found in output)';
+
+    res.json({ message: 'Successfully uploaded to Google Drive.', driveLink: driveLink });
+
+  } catch (error) {
+    console.error('Error uploading to Google Drive:', error);
+    const errorMessage = (error instanceof Error) ? error.message : String(error);
+    res.status(500).json({ message: 'Error uploading to Google Drive', error: errorMessage });
   }
 });
 
@@ -197,6 +270,40 @@ router.get('/download-video/:filename', (req, res) => {
         // fs.unlinkSync(filePath);
       }
     });
+  });
+});
+
+// GET /api/video/srt-content?filename=...
+// Returns the content of a generated SRT file
+router.get('/srt-content', (req, res) => {
+  const srtFilename = req.query.filename;
+
+  if (!srtFilename || typeof srtFilename !== 'string') {
+    return res.status(400).json({ message: 'SRT filename query parameter is required.' });
+  }
+
+  // Basic security check: prevent directory traversal and ensure it's an SRT file
+  if (srtFilename.includes('..') || srtFilename.includes('/') || !srtFilename.endsWith('.srt')) {
+    return res.status(400).send('Invalid or potentially unsafe filename.');
+  }
+
+  const srtFilePath = path.join(PROCESSING_DIR, srtFilename);
+  console.log(`SRT content requested for: ${srtFilePath}`);
+
+  // Check if file exists and read content
+  fs.readFile(srtFilePath, 'utf8', (err, data) => {
+    if (err) {
+      if (err.code === 'ENOENT') {
+        console.error(`SRT file not found: ${srtFilePath}`);
+        return res.status(404).json({ message: 'SRT file not found.' });
+      } else {
+        console.error(`Error reading SRT file: ${srtFilePath}`, err);
+        return res.status(500).json({ message: 'Error reading SRT file.' });
+      }
+    }
+    // Send content as plain text
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(data);
   });
 });
 
