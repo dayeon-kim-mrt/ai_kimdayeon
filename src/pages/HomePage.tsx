@@ -78,7 +78,12 @@ const HomePage: React.FC = () => {
   // 편집 가능한 최종 Slack 메시지 상태
   const [editableSlackMessage, setEditableSlackMessage] = useState<string>('');
   const [srtFile, setSrtFile] = useState<File | null>(null); // 위키 업로드용 상태 유지
-  const [driveLink, setDriveLink] = useState<string>(''); // 위키 업로드용 상태 유지
+  const [driveLink, setDriveLink] = useState<string | null>(null); // 위키 업로드용 상태 유지
+  const [srtContent, setSrtContent] = useState<string | null>(null);
+  const [showSrt, setShowSrt] = useState(false);
+  
+  // Folder input state, ensure it's always a string
+  const [driveTargetFolderInput, setDriveTargetFolderInput] = useState<string>('AI Lab'); 
 
   // --- 영상 처리 관련 새로운 상태 ---
   const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
@@ -132,6 +137,10 @@ const HomePage: React.FC = () => {
     setSrtFile(file); 
     clearUploadResult(); // 이전 결과 초기화
     clearWikiUploadError();
+    setDriveLink(null);
+    setSrtContent(null);
+    setShowSrt(false);
+    setDriveTargetFolderInput('AI Lab'); // Reset to default string
   };
 
   // "오늘의 Wiki" 버튼 핸들러 - 새 훅의 함수 호출
@@ -175,10 +184,10 @@ const HomePage: React.FC = () => {
 
   // 위키 업로드 버튼 핸들러 
   const handleManualUpload = () => {
-    if (!srtFile || !driveLink.trim()) {
+    if (!srtFile || !driveLink) {
       console.error("SRT 파일이 선택되지 않았거나 구글 드라이브 링크가 입력되지 않았습니다.");
-      return;
-    }
+    return;
+  }
     
     clearWikiUploadError();
     clearUploadResult(); 
@@ -199,13 +208,17 @@ const HomePage: React.FC = () => {
     setIsCreatingWiki(false);
     clearWikiUploadError();
     clearUploadResult();
+    setDriveLink(null);
+    setSrtContent(null);
+    setShowSrt(false);
+    setDriveTargetFolderInput('AI Lab'); // Reset to default string
   };
 
   const handleProcessVideo = async () => {
     if (!selectedVideoFile) {
       setVideoError('처리할 MP4 파일을 선택해주세요.');
-      return;
-    }
+    return;
+  }
 
     setIsVideoProcessing(true);
     setVideoProcessingStatus('uploading'); // Start with uploading status
@@ -230,7 +243,7 @@ const HomePage: React.FC = () => {
       setGeneratedSrtFilename(response.data.srtFilename);
       console.log('Video processing successful:', response.data);
 
-    } catch (err: any) {
+  } catch (err: any) {
       console.error('Video processing failed:', err);
       setVideoProcessingStatus('error');
       if (axios.isAxiosError(err) && err.response) {
@@ -238,7 +251,7 @@ const HomePage: React.FC = () => {
       } else {
         setVideoError('영상 처리 중 오류가 발생했습니다. 서버 연결을 확인하세요.');
       }
-    } finally {
+  } finally {
       setIsVideoProcessing(false);
     }
   };
@@ -270,7 +283,8 @@ const HomePage: React.FC = () => {
     try {
       console.log(`Requesting Google Drive upload for: ${processedVideoFilename}`);
       const response = await axios.post(`${API_BASE_URL}/api/video/upload-to-drive`, {
-        processedFilename: processedVideoFilename, // Send the filename in the body
+        processedFilename: processedVideoFilename,
+        targetFolder: driveTargetFolderInput,
       });
 
       console.log('Google Drive upload successful:', response.data);
@@ -382,31 +396,26 @@ const HomePage: React.FC = () => {
              </Alert>
         )}
 
-        {/* --- 결과 버튼 그룹 (처리 완료 시) --- */}
+        {/* --- 결과 표시 영역 (처리 완료 시) --- */}
         {videoProcessingStatus === 'complete' && processedVideoFilename && (
-          <Group mt="sm"> {/* Group buttons together */}
-            {/* 다운로드 버튼 */}
-            <Button
-              component="a"
-              href={`${API_BASE_URL}/api/video/download-video/${processedVideoFilename}`}
-              download
-              leftSection={<IconDownload size={16} />}
-              variant="outline"
-              disabled={isUploadingToDrive} // Disable while uploading to Drive
-            >
-              결과 영상 다운로드
-            </Button>
-
-            {/* Google Drive 업로드 버튼 */}
-            <Button
-              onClick={handleUploadToDrive}
-              leftSection={<IconUpload size={16} />} // Use upload icon
-              loading={isUploadingToDrive} // Show loading spinner
-              disabled={isUploadingToDrive} // Disable while uploading
-            >
-              Google Drive에 업로드
-            </Button>
-          </Group>
+            <Box mt="md"> {/* Use Box for layout */} 
+              <Divider my="sm"/> 
+              <Text size="sm" fw={500} mb={4}>Google Drive 업로드 설정:</Text>
+              {/* THIS IS THE CORRECT LOCATION FOR THE INPUT */}
+              <TextInput
+                  label="업로드 폴더 (in MY REALTRIP)"
+                  placeholder="예: AI Lab/영상팀 (비워두면 최상위)"
+                  value={driveTargetFolderInput} 
+                  onChange={(event) => setDriveTargetFolderInput(event.currentTarget.value)}
+                  mb="sm" // Use sm margin like other elements
+                  disabled={isOverallLoading} // Disable when any major task is running
+              />
+              {/* Buttons are below this input */}
+              <Group mt="sm"> 
+                <Button component="a" href={`${API_BASE_URL}/api/video/download-video/${processedVideoFilename}`} download leftSection={<IconDownload size={16} />} variant="outline" disabled={isOverallLoading}> 결과 영상 다운로드 </Button>
+                <Button onClick={handleUploadToDrive} leftSection={<IconUpload size={16} />} loading={isUploadingToDrive} disabled={isOverallLoading}> Google Drive에 업로드 </Button>
+              </Group>
+            </Box>
         )}
 
         {/* Google Drive 업로드 결과/오류 표시 */}
@@ -458,12 +467,12 @@ const HomePage: React.FC = () => {
                 disabled={isOverallLoading} // 전체 로딩 시 비활성화
             />
         </Group>
-        {/* 구글 드라이브 링크 입력 */}
+      {/* 구글 드라이브 링크 입력 */}
         <TextInput
           mb="sm"
           label="구글 드라이브 링크"
-          placeholder="https://drive.google.com/..."
-          value={driveLink} // 링크 상태 연결
+            placeholder="https://drive.google.com/..."
+          value={driveLink ?? ''}
           onChange={(e) => setDriveLink(e.target.value)} // 입력 변경 시 상태 업데이트
           required // 필수 입력 필드 표시
           disabled={isOverallLoading} // 전체 로딩 시 비활성화
@@ -471,7 +480,7 @@ const HomePage: React.FC = () => {
         {/* 위키 생성 버튼 */}
         <Button
           onClick={handleManualUpload} // 클릭 시 업로드 핸들러 실행
-          disabled={isOverallLoading || !srtFile || !driveLink.trim()} // 업로드 중이거나 필수 입력값이 없으면 비활성화
+          disabled={isOverallLoading || !srtFile || !driveLink} // 업로드 중이거나 필수 입력값이 없으면 비활성화
           loading={isWikiUploading} // 업로드 중일 때 로딩 스피너 표시
         >
           위키 페이지 생성
@@ -607,7 +616,7 @@ const HomePage: React.FC = () => {
             </Alert>
         )}
         {/* 전송 성공 메시지 표시 */}
-        {sendResult && (
+      {sendResult && (
             <Alert color="green" title="전송 성공" mt="sm" onClose={clearSendResult} withCloseButton>
               {sendResult}
             </Alert>

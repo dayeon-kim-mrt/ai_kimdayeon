@@ -17,7 +17,17 @@ services:
     env_file:
       - ./server/.env # server 디렉토리의 .env 파일 사용
     volumes:
-      - ./server/credentials.json:/usr/src/app/credentials.json:ro # credentials.json 마운트 (읽기 전용)
+      # Mount the entire local server directory to the container's working directory
+      - ./server:/usr/src/app
+      # Use an anonymous volume to persist node_modules from the image build step
+      # This prevents the host mount from overwriting node_modules
+      - /usr/src/app/node_modules
+      # Mount Python scripts directory for live changes
+      - ./server/video_processing_scripts:/usr/src/app/video_processing_scripts
+      # Mount credentials file read-only
+      - ./server/credentials.json:/usr/src/app/credentials.json:ro
+      # (Optional) Mount token file if it needs to persist outside container
+      # - ./server/token.pickle:/usr/src/app/token.pickle
     networks:
       - app-network
     # 필요시 볼륨 마운트 추가 (예: 로그 파일)

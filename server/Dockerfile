@@ -1,62 +1,65 @@
-# server/Dockerfile (빌드 컨텍스트는 이제 프로젝트 루트 '.')
+# server/Dockerfile (Build context: project root '.')
 
-# 1. Node.js 및 기본 도구 설치 (Debian 기반 이미지 사용)
+# Base image with Node.js
 FROM node:lts AS base
 
-# pyenv 설치 및 Python 3.11.11 설치
-ENV PYENV_ROOT="/root/.pyenv"
-# pyenv shims 및 bin 경로, pipx 경로를 PATH에 추가
-ENV PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:/root/.local/bin:$PATH"
-
-# pyenv 의존성 및 기타 도구 설치 (+ 한글 폰트 추가)
+# Install system dependencies for Python build (pyenv) and runtime (ffmpeg, git)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # pyenv dependencies
+    # pyenv build dependencies
     make build-essential libssl-dev zlib1g-dev libbz2-dev \
     libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev \
     libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl \
-    # Other dependencies
+    # Runtime dependencies
     git ffmpeg \
-    # Add Korean font package
+    # Korean fonts for potential subtitle rendering needs
     fonts-noto-cjk \
     # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
-# pyenv 설치
-RUN curl https://pyenv.run | bash
-
-# Python 3.11.11 설치 및 전역 설정
-RUN pyenv install 3.11.11 && \
+# Setup pyenv and install Python 3.11
+ENV PYENV_ROOT="/root/.pyenv"
+ENV PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
+RUN curl https://pyenv.run | bash && \
+    pyenv install 3.11.11 && \
     pyenv global 3.11.11
 
-# pyenv Python을 사용하여 pipx 설치 (pip 업그레이드 포함)
+# Install poetry using the installed Python
+# Ensure PATH includes pipx binaries (~/.local/bin)
+ENV PATH="/root/.local/bin:$PATH"
 RUN python -m pip install --upgrade pip && \
-    python -m pip install --user pipx
+    python -m pip install --user pipx && \
+    pipx install poetry
 
-# pipx를 사용하여 poetry 설치
-RUN pipx install poetry
-
-# 2. 작업 디렉토리 설정
+# Set working directory for the application
 WORKDIR /usr/src/app
 
-# --- Node.js 애플리케이션 설정 ---
-COPY server/package*.json ./
-RUN npm install --only=production
-
-# --- Poetry 프로젝트 설정 (변경된 경로 사용) ---
-# 빌드 컨텍스트 루트의 server/video_processing_scripts 에서 파일을 복사하여
-# 컨테이너 WORKDIR(/usr/src/app) 아래 video_processing_scripts 폴더로 복사
+# --- Install Python dependencies first for layer caching ---
+# Copy only necessary files for poetry install from the correct location
+# Use server/video_processing_scripts path relative to build context
 COPY server/video_processing_scripts/pyproject.toml server/video_processing_scripts/poetry.lock* ./video_processing_scripts/
-# 컨테이너 WORKDIR 아래의 video_processing_scripts 폴더로 이동하여 poetry 실행
+# Change to the correct directory name and install dependencies
 RUN cd video_processing_scripts && poetry install --no-root --only main
 
-# --- 나머지 소스 코드 복사 ---
-# 서버 코드 복사
-COPY server/ .
-# 파이썬 스크립트 코드 복사 (변경된 경로)
+# --- Install Node.js dependencies ---
+# Copy package files from the correct location (server/)
+COPY server/package*.json ./
+# Install production Node.js dependencies
+RUN npm install --only=production 
+
+# --- Copy application source code --- 
+# Copy Node.js server code from local server/ directory to WORKDIR (/usr/src/app)
+COPY server/ . 
+# Copy Python code from local server/video_processing_scripts/ directory to WORKDIR/video_processing_scripts
+# Use the correct source path and directory name
 COPY server/video_processing_scripts/ ./video_processing_scripts/
 
-# 5. 애플리케이션 포트 노출
+# (Optional but recommended) Create output directories if needed by the app
+RUN mkdir -p /usr/src/app/uploads \
+             /usr/src/app/processing \
+             /usr/src/app/output
+
+# Expose the application port
 EXPOSE 3001
 
-# 6. 애플리케이션 실행 명령어
+# Run the Node.js application (index.js should be in /usr/src/app now)
 CMD [ "node", "index.js" ] 

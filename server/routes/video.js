@@ -171,68 +171,77 @@ router.post('/process-video', upload.single('video'), async (req, res) => {
 // POST /api/video/upload-to-drive
 // Handles uploading the processed video file to Google Drive
 router.post('/upload-to-drive', async (req, res) => {
-  const { processedFilename } = req.body; // Get filename from request body
+  // Get processedFilename and targetFolder from request body
+  const { processedFilename, targetFolder } = req.body; 
+  const targetSharedDrive = 'MY REALTRIP'; 
+  // targetDriveFolder is now dynamic from request, remove hardcoded version
+  // const targetDriveFolder = 'AI Lab';      
 
   if (!processedFilename) {
     return res.status(400).json({ message: 'Processed filename is required.' });
   }
+  // targetFolder can be empty or null, which defaults to root in drive-uploader
 
-  // Basic security check
-  if (processedFilename.includes('..') || processedFilename.includes('/')) {
-    return res.status(400).send('Invalid filename.');
-  }
+  const originalFilePath = path.join(__dirname, '..', 'output', processedFilename);
 
-  const finalVideoPath = path.join(OUTPUT_DIR, processedFilename);
-  const containerPoetryCwd = 'video_processing_scripts'; // Use the new folder name
-
-  // --- Specify the target Google Shared Drive and folder ---
-  const targetSharedDrive = 'MY REALTRIP'; // Correct Shared Drive name
-  const targetDriveFolder = 'AI Lab';      // Correct folder name
-
-  console.log(`Upload to Shared Drive requested for: ${finalVideoPath} to Shared Drive: "${targetSharedDrive}", Folder: "${targetDriveFolder}"`);
+  console.log(`Received request to upload: ${processedFilename}`);
+  console.log(`Target folder specified: ${targetFolder || '(Root)'}`); // Log target folder
+  console.log(`Original path: ${originalFilePath}`);
 
   try {
-    // Check if the file actually exists before trying to upload
-    if (!fs.existsSync(finalVideoPath)) {
-      console.error(`File not found for Drive upload: ${finalVideoPath}`);
+    if (!fs.existsSync(originalFilePath)) {
+      console.error(`File not found for Drive upload: ${originalFilePath}`);
       return res.status(404).json({ message: 'Processed video file not found.' });
     }
 
-    // Step 3: Run drive-uploader using poetry run
-    console.log(`Starting Google Drive upload for: ${finalVideoPath}`);
+    // Prepare arguments using original path and received targetFolder
+    // Correctly include the 'upload' subcommand based on README
     const uploadArgs = [
-        'run',
-        'drive-uploader',
-        'upload',
-        '--file', finalVideoPath, // Absolute path inside container
-        '--credentials', '/usr/src/app/credentials.json', // Path to credentials
-        '--token', '/usr/src/app/token.pickle'           // Path to token file
+      'upload', // <-- Add the correct subcommand 'upload' here!
+      '--file', originalFilePath, 
+      '--credentials', '/usr/src/app/credentials.json',
+      '--token', '/usr/src/app/token.pickle'
     ];
 
-    // Add shared drive option if defined
     if (targetSharedDrive) {
-        uploadArgs.push('--shared-drive', targetSharedDrive);
+      uploadArgs.push('--shared-drive', targetSharedDrive);
     }
-    // Add folder option if defined (for within the shared drive)
-    if (targetDriveFolder) {
-        uploadArgs.push('--folder', targetDriveFolder); // Add the --folder option
+    if (targetFolder) { 
+      uploadArgs.push('--folder', targetFolder); 
     }
 
-    const uploadResult = await runScript('poetry', uploadArgs, { cwd: containerPoetryCwd }); // Use updated cwd
+    // Revert back to calling poetry directly, as this worked for other scripts 
+    // and the previous ENOENT was likely due to arg/volume issues now fixed.
+    console.log(`Running poetry run drive-uploader upload with args: ${uploadArgs.join(' ')}`);
+    const { stdout, stderr } = await runScript(
+      'poetry', // <-- Use poetry command directly
+      ['run', 'drive-uploader', ...uploadArgs], // <-- Correct arguments starting with 'upload'
+      { cwd: 'video_processing_scripts' } // <-- Correct working directory
+    );
+    
+    // Script execution was successful (promise resolved, exit code 0)
+    // Log stdout and stderr for debugging, but don't treat stderr warnings as errors
+    console.log('drive-uploader stdout:', stdout);
+    if (stderr) {
+      // Log stderr warning, but don't return an error based on it
+      console.warn('drive-uploader stderr (warning):', stderr); 
+    }
 
-    console.log('Google Drive upload command finished.');
-    console.log('Drive uploader stdout:', uploadResult.stdout);
+    // Proceed with success handling (extract link, send response)
+    const linkMatch = stdout.match(/(https:\/\/drive\.google\.com\/[^\s]+)/);
+    const driveLink = linkMatch ? linkMatch[1] : null;
 
-    // Try to parse the Drive link from stdout (adjust based on actual script output)
-    const driveLinkMatch = uploadResult.stdout.match(/https?:\/\/drive\.google\.com\/file\/d\/[^\s]+/);
-    const driveLink = driveLinkMatch ? driveLinkMatch[0] : 'Upload successful (Link not found in output)';
-
-    res.json({ message: 'Successfully uploaded to Google Drive.', driveLink: driveLink });
+    res.status(200).json({
+      message: 'Google Drive 업로드 성공',
+      driveLink: driveLink || '링크를 찾을 수 없습니다. stdout 확인 필요',
+      stdout: stdout
+    });
 
   } catch (error) {
-    console.error('Error uploading to Google Drive:', error);
+    // This catch block handles actual script execution errors (non-zero exit code)
+    console.error('Error during Google Drive upload process:', error);
     const errorMessage = (error instanceof Error) ? error.message : String(error);
-    res.status(500).json({ message: 'Error uploading to Google Drive', error: errorMessage });
+    return res.status(500).json({ message: 'Google Drive 업로드 중 내부 오류 발생', error: errorMessage });
   }
 });
 
